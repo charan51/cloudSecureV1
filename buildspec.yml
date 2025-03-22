@@ -3,38 +3,97 @@ version: 0.2
 phases:
   install:
     runtime-versions:
-      nodejs: 12
+      nodejs: 16
     commands:
-      - echo "Starting installation"
+      - echo "Starting installation phase"
+      - npm install -g npm@latest
+      - npm --version
+      - node --version
+  
+  pre_build:
+    commands:
+      - echo "Starting pre-build phase"
+      - echo "Logging in to Docker Hub..." # Optional: if you use private Docker images
+      # - echo $DOCKER_PASSWORD | docker login -u $DOCKER_USERNAME --password-stdin
+      
+      # Install dependencies for testing
+      - echo "Installing dependencies..."
+      - cd $CODEBUILD_SRC_DIR
+      - if [ -f "package.json" ]; then npm install; fi
+      
+      # Run tests if present
+      - echo "Running tests..."
+      - if [ -f "package.json" ]; then npm test || echo "No tests found"; fi
   
   build:
     commands:
       - echo "Starting build phase"
-      - mkdir -p app scripts
-      - echo "Hello World" > app/test.txt
       
-      # Create a simple Docker Compose file for testing
+      # Create the directory for deployment artifacts
+      - mkdir -p build scripts
+      
+      # Build the application - adjust as needed for your specific tech stack
+      - echo "Building application..."
+      - if [ -f "package.json" ]; then npm run build || echo "No build script found"; fi
+      
+      # Create a Dockerfile if one doesn't exist
       - |
-        cat > app/docker-compose.yml << 'EOL'
+        if [ ! -f "Dockerfile" ]; then
+          echo "Creating default Dockerfile..."
+          cat > Dockerfile << 'EOL'
+          FROM node:16-alpine
+          WORKDIR /app
+          COPY package*.json ./
+          RUN npm install --production
+          COPY . .
+          EXPOSE 3000
+          CMD ["npm", "start"]
+          EOL
+        fi
+      
+      # Create a Docker Compose file
+      - |
+        cat > docker-compose.yml << 'EOL'
         version: '3'
         services:
-          web:
-            image: nginx:latest
+          app:
+            build: .
+            restart: always
             ports:
-              - "80:80"
+              - "3000:3000"
             volumes:
-              - ./html:/usr/share/nginx/html
+              - ./:/app
+              - /app/node_modules
+            environment:
+              - NODE_ENV=production
+          
+          # Uncomment and adjust if you need a database
+          # db:
+          #   image: mongo:latest
+          #   restart: always
+          #   ports:
+          #     - "27017:27017"
+          #   volumes:
+          #     - mongodb_data:/data/db
+          
+          # Uncomment if you need a reverse proxy
+          # nginx:
+          #   image: nginx:latest
+          #   restart: always
+          #   ports:
+          #     - "80:80"
+          #     - "443:443"
+          #   volumes:
+          #     - ./nginx:/etc/nginx/conf.d
+          #   depends_on:
+          #     - app
+        
+        # Uncomment if using database volumes
+        # volumes:
+        #   mongodb_data:
         EOL
       
-      # Create a test HTML file
-      - mkdir -p app/html
-      - echo "<html><body><h1>Security AI Application</h1><p>Deployed successfully!</p></body></html>" > app/html/index.html
-  
-  post_build:
-    commands:
-      - echo "Starting post-build phase"
-      
-      # Create a SIMPLIFIED installation script focusing just on Docker
+      # Create a robust installation script
       - |
         cat > scripts/before_install.sh << 'EOL'
         #!/bin/bash
@@ -44,75 +103,102 @@ phases:
         # Create application directory
         mkdir -p /opt/security-ai/app
         
-        # Install Docker using official Docker install script (most reliable method)
+        # Install Docker
         echo "Installing Docker using official Docker script..."
         curl -fsSL https://get.docker.com -o get-docker.sh
-        sudo sh ./get-docker.sh
+        sh ./get-docker.sh
         
-        # Verify Docker installation
-        echo "Docker version:"
-        sudo docker --version
+        # Start and enable Docker
+        systemctl start docker
+        systemctl enable docker
         
-        # Make sure Docker service is running
-        echo "Starting Docker service..."
-        sudo systemctl start docker
-        sudo systemctl enable docker
-        sudo systemctl status docker
-        
-        # Add ec2-user to docker group
-        sudo usermod -aG docker ec2-user
-        
-        # Installing Docker Compose directly
+        # Install Docker Compose
         echo "Installing Docker Compose..."
-        sudo curl -L "https://github.com/docker/compose/releases/download/v2.23.3/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-        sudo chmod +x /usr/local/bin/docker-compose
-        sudo ln -sf /usr/local/bin/docker-compose /usr/bin/docker-compose
+        curl -L "https://github.com/docker/compose/releases/download/v2.24.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+        chmod +x /usr/local/bin/docker-compose
+        ln -sf /usr/local/bin/docker-compose /usr/bin/docker-compose
         
-        echo "Docker Compose version:"
-        docker-compose --version || echo "Docker Compose installation failed"
+        # Verify installations
+        docker --version
+        docker-compose --version
         
         echo "Installation completed at $(date)"
         EOL
       - chmod +x scripts/before_install.sh
       
-      # Simplify the deployment script - focus on just running the container
+      # Create a deployment script
       - |
         cat > scripts/deploy.sh << 'EOL'
         #!/bin/bash
         
         echo "Deployment started at $(date)"
         
-        # Application deployment logic
+        # Navigate to application directory
         cd /opt/security-ai/app
-        echo "Current directory: $(pwd)"
-        ls -la
         
-        # Make sure Docker is installed, if not try again
-        if ! command -v docker &> /dev/null; then
-            echo "Docker not found, installing again..."
-            curl -fsSL https://get.docker.com -o get-docker.sh
-            sudo sh ./get-docker.sh
-            sudo systemctl start docker
-            sudo systemctl enable docker
+        # Pull the latest image if using pre-built images
+        # docker pull yourusername/your-app:latest
+        
+        # Stop any existing containers
+        if [ -f "docker-compose.yml" ]; then
+          docker-compose down || true
         fi
         
-        # Verify Docker is working
-        echo "Docker version:"
-        sudo docker --version
-        echo "Docker status:"
-        sudo systemctl status docker
+        # Build and start containers
+        docker-compose up -d --build
         
-        # Run Docker directly without compose if needed
-        echo "Starting NGINX container directly..."
-        sudo docker run -d -p 80:80 --name web -v $(pwd)/html:/usr/share/nginx/html nginx:latest
+        # Check the status
+        docker-compose ps
         
-        # Check container status
-        echo "Running containers:"
-        sudo docker ps
+        # Display logs
+        docker-compose logs -t --tail=20
         
-        echo "Deployment completed at $(date)"
+        # Perform health check
+        echo "Performing health check..."
+        for i in {1..12}; do
+          if curl -s http://localhost:3000/health || curl -s http://localhost:3000/; then
+            echo "Application is running!"
+            break
+          fi
+          
+          if [ $i -eq 12 ]; then
+            echo "Health check failed after 60 seconds"
+            docker-compose logs
+            exit 1
+          fi
+          
+          echo "Waiting for application to start... (Attempt $i/12)"
+          sleep 5
+        done
+        
+        echo "Deployment completed successfully at $(date)"
         EOL
       - chmod +x scripts/deploy.sh
+      
+      # Create an application stop script
+      - |
+        cat > scripts/application_stop.sh << 'EOL'
+        #!/bin/bash
+        
+        echo "Stopping application at $(date)"
+        
+        # Navigate to app directory
+        cd /opt/security-ai/app
+        
+        # Gracefully stop the containers if docker-compose exists
+        if [ -f "docker-compose.yml" ]; then
+          docker-compose down || true
+        else
+          # Find and stop containers by name pattern
+          CONTAINERS=$(docker ps -q --filter "name=security-ai")
+          if [ ! -z "$CONTAINERS" ]; then
+            docker stop $CONTAINERS
+          fi
+        fi
+        
+        echo "Application stopped at $(date)"
+        EOL
+      - chmod +x scripts/application_stop.sh
       
       # Create appspec.yml for CodeDeploy
       - |
@@ -120,11 +206,14 @@ phases:
         version: 0.0
         os: linux
         files:
-          - source: /app
+          - source: /
             destination: /opt/security-ai/app
-          - source: /scripts
-            destination: /opt/security-ai/scripts
+            overwrite: true
         hooks:
+          ApplicationStop:
+            - location: scripts/application_stop.sh
+              timeout: 300
+              runas: root
           BeforeInstall:
             - location: scripts/before_install.sh
               timeout: 900
@@ -134,12 +223,27 @@ phases:
               timeout: 900
               runas: root
         EOL
+  
+  post_build:
+    commands:
+      - echo "Starting post-build phase"
+      - echo "Validating appspec.yml and scripts..."
+      - cat appspec.yml
+      - ls -la scripts/
       
-      - echo "CodeDeploy configuration created successfully"
+      # Optional: Build and push Docker image to a registry
+      # - echo "Building Docker image..."
+      # - docker build -t yourusername/your-app:latest .
+      # - echo "Pushing Docker image to registry..."
+      # - docker push yourusername/your-app:latest
 
 artifacts:
   files:
     - appspec.yml
     - scripts/**/*
-    - app/**/*
+    - docker-compose.yml
+    - Dockerfile
+    - package.json
+    - package-lock.json
+    - '**/*'  # Include all files from the repository
   discard-paths: no
