@@ -40,7 +40,7 @@ resource "random_id" "suffix" {
 }
 
 resource "aws_instance" "security_ai" {
-  ami           = "ami-08b5b3a93ed654d19"
+  ami           = "ami-08b5b3a93ed654d19" # Replace with latest if needed
   instance_type = "t2.micro"
   key_name      = "cloudsecure"
   
@@ -49,10 +49,16 @@ resource "aws_instance" "security_ai" {
   user_data = <<-EOF
               #!/bin/bash
               apt-get update -y
-              apt-get install -y docker.io
+              apt-get install -y docker.io ruby wget
               systemctl start docker
               systemctl enable docker
-              docker run -d -p 5000:5000 ai-threat-detection
+              mkdir -p /opt/security-ai/app
+              cd /tmp
+              wget https://aws-codedeploy-us-east-1.s3.amazonaws.com/latest/install
+              chmod +x install
+              ./install auto
+              systemctl start codedeploy-agent
+              systemctl enable codedeploy-agent
               EOF
 
   tags = {
@@ -79,7 +85,7 @@ resource "aws_security_group" "security_ai" {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = ["0.0.0.0/0"] # Restrict this in production
   }
 
   egress {
@@ -162,21 +168,6 @@ resource "aws_iam_role_policy" "codepipeline_policy" {
       },
       {
         Action = [
-          "codecommit:GitPull",
-          "codecommit:GitPush",
-          "codecommit:GetBranch",
-          "codecommit:CreateCommit",
-          "codecommit:GetCommit",
-          "codecommit:GetRepository",
-          "codecommit:BatchGetCommits",
-          "codecommit:GetUploadArchiveStatus",
-          "codecommit:UploadArchive"
-        ],
-        Resource = "*",
-        Effect = "Allow"
-      },
-      {
-        Action = [
           "codedeploy:CreateDeployment",
           "codedeploy:GetApplication",
           "codedeploy:GetApplicationRevision",
@@ -240,14 +231,9 @@ resource "aws_iam_role_policy" "codebuild_policy" {
       },
       {
         Action = [
-          "ec2:DescribeInstances",
+          "ec2:Describe*",
           "ec2:CreateNetworkInterface",
-          "ec2:DescribeNetworkInterfaces",
           "ec2:DeleteNetworkInterface",
-          "ec2:DescribeSubnets",
-          "ec2:DescribeSecurityGroups",
-          "ec2:DescribeDhcpOptions",
-          "ec2:DescribeVpcs",
           "ec2:CreateNetworkInterfacePermission"
         ],
         Resource = "*",
@@ -271,7 +257,7 @@ resource "aws_codebuild_project" "security_ai" {
     type                        = "LINUX_CONTAINER"
     compute_type                = "BUILD_GENERAL1_SMALL"
     image                       = "aws/codebuild/amazonlinux2-x86_64-standard:3.0"
-    privileged_mode             = true  # Required for Docker commands
+    privileged_mode             = true
     
     environment_variable {
       name  = "INSTANCE_IP"
@@ -308,8 +294,8 @@ resource "aws_codepipeline" "security_ai" {
       
       configuration = {
         ConnectionArn    = aws_codestarconnections_connection.github.arn
-        FullRepositoryId = "charan51/cloudSecureV1"  # Replace with your repo
-        BranchName       = "main"  # Only deploy from main branch
+        FullRepositoryId = "charan51/cloudSecureV1"
+        BranchName       = "main"
       }
     }
   }
@@ -364,9 +350,10 @@ resource "aws_codedeploy_app" "security_ai" {
 
 # CodeDeploy deployment group
 resource "aws_codedeploy_deployment_group" "security_ai" {
-  app_name              = aws_codedeploy_app.security_ai.name
-  deployment_group_name = "security-ai-deployment-group-${random_id.suffix.hex}"
-  service_role_arn      = aws_iam_role.codedeploy_role.arn
+  app_name               = aws_codedeploy_app.security_ai.name
+  deployment_group_name  = "security-ai-deployment-group-${random_id.suffix.hex}"
+  service_role_arn       = aws_iam_role.codedeploy_role.arn
+  deployment_config_name = "CodeDeployDefault.OneAtATime" # Explicitly set for single instance
   
   ec2_tag_set {
     ec2_tag_filter {
@@ -409,5 +396,4 @@ output "codepipeline_url" {
   value = "https://console.aws.amazon.com/codesuite/codepipeline/pipelines/${aws_codepipeline.security_ai.name}/view?region=${data.aws_region.current.name}"
 }
 
-# Current region data source
 data "aws_region" "current" {}

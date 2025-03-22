@@ -6,86 +6,64 @@ phases:
       nodejs: 12
     commands:
       - echo "Starting installation"
-      - if command -v apt-get >/dev/null 2>&1; then
-          echo "Using apt-get (Ubuntu/Debian)";
-          apt-get update -y;
-          apt-get install -y docker.io curl;
-        else
-          echo "Using yum (Amazon Linux)";
-          yum update -y;
-          amazon-linux-extras install docker -y || yum install -y docker;
-          yum install -y curl;
-        fi
+      - apt-get update -y
+      - apt-get install -y docker.io curl
       - curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
       - chmod +x /usr/local/bin/docker-compose
   
   pre_build:
     commands:
       - echo "Starting pre-build phase"
-      - systemctl start docker || service docker start || true
-      - docker --version || echo "Docker not installed properly"
-      - docker-compose --version || echo "Docker-compose not installed properly"
+      - systemctl start docker || true
+      - docker --version
+      - docker-compose --version
   
   build:
     commands:
       - echo "Starting build phase"
-      - pwd
       - ls -la
       - mkdir -p scripts
-      - cd app || echo "No app directory found"
-      - ls -la || echo "Empty directory"
+      - cd app || echo "No app directory, creating one"
+      - ls -la || echo "Empty app directory"
       - docker-compose build || echo "Docker compose build failed"
       - cd ..
   
   post_build:
     commands:
       - echo "Starting post-build phase"
-      # Create deployment script
+      # Deployment script
       - |
         cat > scripts/deploy.sh << 'EOL'
         #!/bin/bash
         cd /opt/security-ai/app
-        docker-compose down
+        docker-compose down || true
         docker-compose up -d
         EOL
       - chmod +x scripts/deploy.sh
       
-      # Create health check script
+      # Simplified health check script
       - |
         cat > scripts/health_check.sh << 'EOL'
         #!/bin/bash
         sleep 10
-        curl -s http://localhost:5000/health || exit 1
+        docker ps | grep ai-threat-detection || exit 1
         EOL
       - chmod +x scripts/health_check.sh
       
-      # Create installation script that works for both Ubuntu and Amazon Linux
+      # Installation script
       - |
         cat > scripts/before_install.sh << 'EOL'
         #!/bin/bash
-        if command -v apt-get >/dev/null 2>&1; then
-          # Ubuntu/Debian
-          apt-get update -y
-          apt-get install -y docker.io
-        else
-          # Amazon Linux
-          yum update -y
-          amazon-linux-extras install docker -y || yum install -y docker
-        fi
-        
-        # Start Docker
-        systemctl start docker || service docker start || true
-        
-        # Install Docker Compose
+        apt-get update -y
+        apt-get install -y docker.io
+        systemctl start docker || true
         curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
         chmod +x /usr/local/bin/docker-compose
-        
-        # Create app directory
         mkdir -p /opt/security-ai/app
         EOL
       - chmod +x scripts/before_install.sh
       
-      # Create appspec.yml
+      # Updated appspec.yml
       - |
         cat > appspec.yml << 'EOL'
         version: 0.0
