@@ -248,6 +248,28 @@ resource "aws_iam_role_policy" "codebuild_policy" {
   })
 }
 
+# Add SSM permissions to the CodeBuild role
+resource "aws_iam_role_policy" "codebuild_ssm_policy" {
+  name = "security-ai-codebuild-ssm-policy-${random_id.suffix.hex}"
+  role = aws_iam_role.codebuild_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = [
+          "ssm:GetParameter",
+          "ssm:GetParameters"
+        ],
+        Resource = [
+          "arn:aws:ssm:us-east-1:418295714127:parameter/codebuild/*"
+        ],
+        Effect = "Allow"
+      }
+    ]
+  })
+}
+
 # CodeBuild project
 resource "aws_codebuild_project" "security_ai" {
   name          = "security-ai-build-${random_id.suffix.hex}"
@@ -381,6 +403,53 @@ resource "aws_iam_role_policy_attachment" "ec2_s3_policy" {
 resource "aws_iam_instance_profile" "security_ai" {
   name = "security-ai-instance-profile-${random_id.suffix.hex}"
   role = aws_iam_role.ec2_role.name
+}
+
+# S3 bucket for SSH keys and other secrets
+resource "aws_s3_bucket" "secrets_bucket" {
+  bucket = "security-ai-secrets-${random_id.suffix.hex}"
+}
+
+# Block public access to the bucket
+resource "aws_s3_bucket_public_access_block" "secrets_bucket" {
+  bucket = aws_s3_bucket.secrets_bucket.id
+  
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+# Encrypt the bucket
+resource "aws_s3_bucket_server_side_encryption_configuration" "secrets_bucket" {
+  bucket = aws_s3_bucket.secrets_bucket.id
+  
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
+# Grant CodeBuild access to the S3 bucket
+resource "aws_iam_role_policy" "codebuild_s3_secrets_policy" {
+  name = "security-ai-codebuild-s3-secrets-policy-${random_id.suffix.hex}"
+  role = aws_iam_role.codebuild_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = [
+          "s3:GetObject"
+        ],
+        Resource = [
+          "${aws_s3_bucket.secrets_bucket.arn}/*"
+        ],
+        Effect = "Allow"
+      }
+    ]
+  })
 }
 
 output "instance_ip" {

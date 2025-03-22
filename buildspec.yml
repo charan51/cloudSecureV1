@@ -7,7 +7,7 @@ phases:
     commands:
       - echo "Starting installation"
       - pip install ansible boto3 paramiko
-      - ansible-galaxy collection install community.docker  # Install required collection
+      - ansible-galaxy collection install community.docker
   
   build:
     commands:
@@ -19,68 +19,15 @@ phases:
     commands:
       - echo "Starting post-build phase"
       
-      # Debug environment variables (safely)
+      # Get SSH key from S3
       - |
-        echo "Checking environment variables..."
-        if [ -n "$SSH_PRIVATE_KEY_BASE64" ]; then
-          echo "SSH_PRIVATE_KEY_BASE64 is set (length: $(echo $SSH_PRIVATE_KEY_BASE64 | wc -c) bytes)"
-        else
-          echo "SSH_PRIVATE_KEY_BASE64 is NOT set"
-        fi
-        
-        if [ -n "$SSH_PRIVATE_KEY" ]; then
-          echo "SSH_PRIVATE_KEY is set (length: $(echo $SSH_PRIVATE_KEY | wc -c) bytes)"
-        else
-          echo "SSH_PRIVATE_KEY is NOT set"
-        fi
+        echo "Getting SSH key from S3..."
+        BUCKET_NAME=$(aws cloudformation describe-stacks --stack-name security-ai-stack --query "Stacks[0].Outputs[?OutputKey=='SecretsBucketName'].OutputValue" --output text)
+        aws s3 cp s3://$BUCKET_NAME/ssh-keys/id_rsa /tmp/private_key.pem
+        chmod 600 /tmp/private_key.pem
       
-      # Create a simple test key for debugging
-      - |
-        if [ -z "$SSH_PRIVATE_KEY_BASE64" ] && [ -z "$SSH_PRIVATE_KEY" ]; then
-          echo "⚠️ No SSH keys found in environment variables - trying alternative approach"
-          
-          # Option 1: Hardcode a test key (ONLY FOR DEVELOPMENT/TESTING!)
-          echo "Creating a test SSH key for debugging purposes..."
-          ssh-keygen -t rsa -f /tmp/test_key -N "" -q
-          
-          # Display the public key that needs to be added to the EC2 instance
-          echo "Please add this public key to the EC2 instance's authorized_keys:"
-          cat /tmp/test_key.pub
-          
-          # Use this key for testing
-          cp /tmp/test_key /tmp/private_key.pem
-          chmod 600 /tmp/private_key.pem
-        else
-          # Try to use one of the provided keys
-          if [ -n "$SSH_PRIVATE_KEY_BASE64" ]; then
-            echo "Using SSH_PRIVATE_KEY_BASE64..."
-            echo "$SSH_PRIVATE_KEY_BASE64" | base64 -d > /tmp/private_key.pem
-          else
-            echo "Using SSH_PRIVATE_KEY..."
-            echo "$SSH_PRIVATE_KEY" > /tmp/private_key.pem
-          fi
-          chmod 600 /tmp/private_key.pem
-        fi
-      
-      # Validate the key
-      - |
-        echo "Checking key file:"
-        ls -la /tmp/private_key.pem
-        
-        if [ -s /tmp/private_key.pem ]; then
-          echo "Key file is not empty"
-          
-          if ssh-keygen -y -f /tmp/private_key.pem &>/dev/null; then
-            echo "✅ Key is valid"
-            echo "Public key: $(ssh-keygen -y -f /tmp/private_key.pem)"
-          else
-            echo "❌ Key is invalid format"
-            echo "First 10 characters: $(head -c 10 /tmp/private_key.pem | xxd -p)"
-          fi
-        else
-          echo "❌ Key file is empty"
-          exit 1
-        fi
+      # Alternatively, if you know the bucket name directly:
+      # - aws s3 cp s3://security-ai-secrets-${SUFFIX}/ssh-keys/id_rsa /tmp/private_key.pem
       
       # Create ansible config
       - |
@@ -89,29 +36,32 @@ phases:
         host_key_checking = False
         timeout = 30
         pipelining = True
-        command_warnings = False
-        deprecation_warnings = False
         
         [ssh_connection]
         retries = 3
         ssh_args = -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
         EOL
       
-      # Create dynamic inventory with the decoded key
+      # Create inventory
       - |
-        cat > ansible/dynamic_inventory.ini << EOL
+        cat > ansible/inventory.ini << EOL
         [cloudsecure_instances]
         $INSTANCE_IP ansible_user=ubuntu ansible_ssh_private_key_file=/tmp/private_key.pem
         
         [cloudsecure_instances:vars]
         ansible_python_interpreter=/usr/bin/python3
-        ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
         EOL
       
-      # Run Ansible with the properly formatted key
+      # Verify the key works
+      - |
+        echo "Validating SSH key..."
+        ssh-keygen -y -f /tmp/private_key.pem || echo "Invalid key format"
+        ssh -i /tmp/private_key.pem -o StrictHostKeyChecking=no -o ConnectTimeout=5 ubuntu@$INSTANCE_IP "echo Connected to \$(hostname)" || echo "SSH connection failed"
+      
+      # Run Ansible
       - |
         cd ansible
-        ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook -i dynamic_inventory.ini deploy.yml -v
+        ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook -i inventory.ini deploy.yml -v
 
 artifacts:
   files:
