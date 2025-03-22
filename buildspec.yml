@@ -6,20 +6,20 @@ phases:
       nodejs: 12
     commands:
       - echo "Starting installation"
-      - pip install ansible boto3 paramiko  # Add paramiko for SSH connection support
+      - pip install ansible boto3 paramiko
+      - ansible-galaxy collection install community.docker  # Install required collection
   
   build:
     commands:
       - echo "Starting build phase"
       - mkdir -p app
       - echo "Hello World" > app/test.txt
-      # Build your application here as needed
   
   post_build:
     commands:
       - echo "Starting post-build phase"
       
-      # Create ansible.cfg for automation
+      # Create ansible.cfg
       - |
         cat > ansible/ansible.cfg << 'EOL'
         [defaults]
@@ -32,17 +32,24 @@ phases:
         retries = 3
         EOL
       
-      # Create dynamic inventory
+      # Create dynamic inventory with key-based auth OR password-based auth
       - echo "[cloudsecure_instances]" > ansible/dynamic_inventory.ini
-      - echo "$INSTANCE_IP ansible_user=ubuntu ansible_ssh_private_key_file=/tmp/private_key.pem" >> ansible/dynamic_inventory.ini
+      
+      # OPTION 1: Use password authentication instead of key-based auth
+      - echo "$INSTANCE_IP ansible_user=ubuntu ansible_password=$EC2_PASSWORD" >> ansible/dynamic_inventory.ini
+      
+      # OPTION 2: If you still want to use key authentication, create a key file first
+      # - |
+      #   cat > /tmp/private_key.pem << 'EOL'
+      #   -----BEGIN RSA PRIVATE KEY-----
+      #   YOUR_PRIVATE_KEY_CONTENT_HERE
+      #   -----END RSA PRIVATE KEY-----
+      #   EOL
+      #   chmod 600 /tmp/private_key.pem
+      #   echo "$INSTANCE_IP ansible_user=ubuntu ansible_ssh_private_key_file=/tmp/private_key.pem" >> ansible/dynamic_inventory.ini
+      
       - echo "[cloudsecure_instances:vars]" >> ansible/dynamic_inventory.ini
       - echo "ansible_python_interpreter=/usr/bin/python3" >> ansible/dynamic_inventory.ini
-      
-      # Get SSH key and secure permissions
-      - |
-        aws secretsmanager get-secret-value --secret-id cloudsecure-ssh-key --query SecretString --output text > /tmp/private_key.pem
-        chmod 600 /tmp/private_key.pem
-        trap "rm -f /tmp/private_key.pem" EXIT
       
       # Run Ansible with proper error handling
       - |

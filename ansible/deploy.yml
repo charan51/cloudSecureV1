@@ -136,12 +136,9 @@
       force: yes
 
   - name: Run Docker Compose
-    community.docker.docker_compose_v2:
-      project_src: "{{ app_dir }}"
-      pull: always
-      build: always
-      state: present
-      recreate: auto
+    shell: |
+      cd {{ app_dir }}
+      docker compose up -d --build
     environment:
       COMPOSE_HTTP_TIMEOUT: "200"
 
