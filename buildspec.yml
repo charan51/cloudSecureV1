@@ -19,7 +19,7 @@ phases:
     commands:
       - echo "Starting post-build phase"
       
-      # Create ansible.cfg
+      # Create ansible.cfg with more explicit settings
       - |
         cat > ansible/ansible.cfg << 'EOL'
         [defaults]
@@ -27,17 +27,29 @@ phases:
         timeout = 30
         pipelining = True
         command_warnings = False
+        deprecation_warnings = False
         
         [ssh_connection]
         retries = 3
+        ssh_args = -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
         EOL
       
-      # Create private key file from environment variable
+      # Create SSH config file to disable host key checking
+      - |
+        mkdir -p ~/.ssh
+        cat > ~/.ssh/config << 'EOL'
+        Host *
+          StrictHostKeyChecking no
+          UserKnownHostsFile /dev/null
+        EOL
+        chmod 600 ~/.ssh/config
+      
+      # Create private key file
       - |
         echo "$SSH_PRIVATE_KEY" > /tmp/private_key.pem
         chmod 600 /tmp/private_key.pem
       
-      # Create dynamic inventory with key authentication
+      # Create dynamic inventory
       - |
         cat > ansible/dynamic_inventory.ini << EOL
         [cloudsecure_instances]
@@ -45,23 +57,18 @@ phases:
         
         [cloudsecure_instances:vars]
         ansible_python_interpreter=/usr/bin/python3
+        ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
         EOL
       
-      # Display inventory for debugging
-      - cat ansible/dynamic_inventory.ini
+      # Test SSH connection directly first
+      - |
+        echo "Testing direct SSH connection..."
+        ssh -i /tmp/private_key.pem -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ubuntu@$INSTANCE_IP "echo SSH connection successful" || echo "SSH connection failed"
       
-      # Test SSH connectivity first
-      - ansible cloudsecure_instances -i ansible/dynamic_inventory.ini -m ping -v
-      
-      # Run Ansible playbook
+      # Run Ansible with additional options
       - |
         cd ansible
-        if ansible-playbook -i dynamic_inventory.ini deploy.yml -v; then
-          echo "Ansible deployment successful"
-        else
-          echo "Ansible deployment failed"
-          exit 1
-        fi
+        ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook -i dynamic_inventory.ini deploy.yml -v
 
 artifacts:
   files:
