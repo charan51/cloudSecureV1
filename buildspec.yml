@@ -34,7 +34,7 @@ phases:
     commands:
       - echo "Starting post-build phase"
       
-      # Create a ROBUST installation script
+      # Create a ROBUST installation script with better Amazon Linux detection
       - |
         cat > scripts/before_install.sh << 'EOL'
         #!/bin/bash
@@ -45,25 +45,39 @@ phases:
         # Create application directory
         mkdir -p /opt/security-ai/app
         
-        # Determine Linux distribution
+        # Determine Linux distribution and version
         if [ -f /etc/os-release ]; then
             . /etc/os-release
             OS=$NAME
+            VERSION_ID=$VERSION_ID
+            echo "Detected OS: $OS $VERSION_ID"
         else
             OS=$(cat /etc/system-release | cut -d ' ' -f 1)
+            VERSION_ID=$(cat /etc/system-release | grep -oE '[0-9]+\.[0-9]+' | head -1)
+            echo "Detected OS from system-release: $OS $VERSION_ID"
         fi
         
-        echo "Detected OS: $OS"
-        
-        # Install Docker based on distribution
+        # Different handling for Amazon Linux versions
         if [[ "$OS" == *"Amazon Linux"* ]]; then
-            echo "Installing Docker for Amazon Linux..."
-            sudo yum update -y
-            sudo amazon-linux-extras install -y docker
+            if [[ "$VERSION_ID" == "2" ]]; then
+                echo "Installing Docker for Amazon Linux 2..."
+                sudo yum update -y
+                sudo amazon-linux-extras install -y docker
+                
+                # Make sure docker service file exists
+                sudo yum install -y docker
+            elif [[ "$VERSION_ID" == "2023" ]]; then
+                echo "Installing Docker for Amazon Linux 2023..."
+                sudo dnf update -y
+                sudo dnf install -y docker
+            else
+                echo "Installing Docker for general Amazon Linux..."
+                sudo yum update -y
+                sudo yum install -y docker
+            fi
             
             # Install Docker Compose v2 plugin
-            DOCKER_CONFIG=${DOCKER_CONFIG:-$HOME/.docker}
-            mkdir -p $DOCKER_CONFIG/cli-plugins
+            echo "Installing Docker Compose..."
             COMPOSE_VERSION=v2.23.3
             ARCH=$(uname -m)
             sudo curl -SL "https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-linux-${ARCH}" -o /usr/local/bin/docker-compose
@@ -79,36 +93,58 @@ phases:
             sudo apt-get update
             sudo apt-get install -y docker-ce docker-ce-cli containerd.io
         else
-            echo "Unsupported OS: $OS"
-            exit 1
+            echo "Trying generic Docker installation for $OS..."
+            if command -v yum &> /dev/null; then
+                sudo yum update -y
+                sudo yum install -y docker
+            elif command -v apt-get &> /dev/null; then
+                sudo apt-get update
+                sudo apt-get install -y docker.io
+            else
+                echo "Unsupported package manager - manual installation needed"
+                exit 1
+            fi
         fi
         
-        # Start and enable Docker
+        # Try multiple service names for Docker
         echo "Starting Docker service..."
-        sudo systemctl start docker
-        sudo systemctl enable docker
+        if systemctl list-unit-files | grep -q docker.service; then
+            echo "Found docker.service unit file"
+            sudo systemctl start docker
+            sudo systemctl enable docker
+        elif systemctl list-unit-files | grep -q docker.socket; then
+            echo "Found docker.socket unit file"
+            sudo systemctl start docker.socket
+            sudo systemctl enable docker.socket
+        else
+            echo "Docker service unit not found. Trying to install Docker using official script..."
+            # Try Docker's official installation script as a fallback
+            curl -fsSL https://get.docker.com -o get-docker.sh
+            sudo sh get-docker.sh
+            sudo systemctl start docker
+            sudo systemctl enable docker
+        fi
         
         # Add ec2-user to docker group
         sudo usermod -aG docker ec2-user
         
         # Verify Docker installation
         echo "Verifying Docker installation..."
-        sudo docker --version
+        sudo docker --version || echo "Docker command not found or errored"
         
         # Verify Docker Compose installation
         echo "Verifying Docker Compose installation..."
-        docker-compose --version || echo "Docker Compose not available as 'docker-compose'"
-        docker compose version || echo "Docker Compose not available as 'docker compose'"
+        sudo docker-compose --version || echo "docker-compose command not found or errored"
+        sudo docker compose version || echo "docker compose subcommand not found or errored"
         
         echo "Installation completed at $(date)"
         EOL
       - chmod +x scripts/before_install.sh
       
-      # Create a ROBUST deployment script
+      # Update deployment script to handle Docker service not found
       - |
         cat > scripts/deploy.sh << 'EOL'
         #!/bin/bash
-        set -e  # Exit on any error
         
         echo "Deployment started at $(date)"
         
@@ -119,9 +155,32 @@ phases:
         # Create HTML directory if it doesn't exist
         mkdir -p html
         
-        # Check Docker status
+        # Check if Docker is running without failing script
         echo "Checking Docker status..."
-        sudo systemctl status docker
+        if systemctl is-active docker &>/dev/null; then
+            echo "Docker service is active"
+        elif systemctl is-active docker.socket &>/dev/null; then
+            echo "Docker socket is active"
+        else
+            echo "Docker service not running. Trying to start it..."
+            sudo systemctl start docker || echo "Failed to start docker service"
+            
+            # If still not running, try the Docker installer again
+            if ! systemctl is-active docker &>/dev/null; then
+                echo "Installing Docker using official script..."
+                curl -fsSL https://get.docker.com -o get-docker.sh
+                sudo sh get-docker.sh
+                sudo systemctl start docker || echo "Failed to start docker service after installation"
+            fi
+        fi
+        
+        # Check if Docker command works
+        if sudo docker ps &>/dev/null; then
+            echo "Docker command working"
+        else
+            echo "Docker command not working. Installation might be incomplete."
+            exit 1
+        fi
         
         # Try both Docker Compose commands
         echo "Running Docker Compose..."
@@ -129,22 +188,19 @@ phases:
             echo "Using docker-compose command..."
             sudo docker-compose down || true
             sudo docker-compose up -d
-        elif command -v docker &> /dev/null && docker compose version &> /dev/null; then
+        elif command -v docker &> /dev/null && sudo docker compose version &> /dev/null; then
             echo "Using docker compose command..."
             sudo docker compose down || true
             sudo docker compose up -d
         else
-            echo "ERROR: Neither docker-compose nor docker compose is available!"
-            echo "Installing Docker Compose v2 plugin..."
-            DOCKER_CONFIG=${DOCKER_CONFIG:-$HOME/.docker}
-            mkdir -p $DOCKER_CONFIG/cli-plugins
+            echo "Installing Docker Compose..."
             COMPOSE_VERSION=v2.23.3
             ARCH=$(uname -m)
             sudo curl -SL "https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-linux-${ARCH}" -o /usr/local/bin/docker-compose
             sudo chmod +x /usr/local/bin/docker-compose
             sudo ln -sf /usr/local/bin/docker-compose /usr/bin/docker-compose
             
-            echo "Trying again with docker-compose..."
+            echo "Trying with docker-compose..."
             sudo docker-compose down || true
             sudo docker-compose up -d
         fi
@@ -170,11 +226,11 @@ phases:
         hooks:
           BeforeInstall:
             - location: scripts/before_install.sh
-              timeout: 600
+              timeout: 900
               runas: root
           ApplicationStart:
             - location: scripts/deploy.sh
-              timeout: 600
+              timeout: 900
               runas: root
         EOL
       
