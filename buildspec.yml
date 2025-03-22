@@ -32,44 +32,14 @@ phases:
   post_build:
     commands:
       - echo Build completed
-      - echo Creating deployment scripts
       - mkdir -p scripts
-      - echo "#!/bin/bash" > scripts/deploy.sh
-      - echo "cd /opt/security-ai/app" >> scripts/deploy.sh
-      - echo "docker-compose down" >> scripts/deploy.sh
-      - echo "docker-compose up -d" >> scripts/deploy.sh
+      - printf '#!/bin/bash\ncd /opt/security-ai/app\ndocker-compose down\ndocker-compose up -d\n' > scripts/deploy.sh
       - chmod +x scripts/deploy.sh
-      - echo "#!/bin/bash" > scripts/health_check.sh
-      - echo "sleep 10" >> scripts/health_check.sh
-      - echo "curl -s http://localhost:5000/health || exit 1" >> scripts/health_check.sh
+      - printf '#!/bin/bash\nsleep 10\ncurl -s http://localhost:5000/health || exit 1\n' > scripts/health_check.sh
       - chmod +x scripts/health_check.sh
-      - echo "#!/bin/bash" > scripts/before_install.sh
-      - echo "apt-get update -y" >> scripts/before_install.sh
-      - echo "apt-get install -y docker.io" >> scripts/before_install.sh
-      - echo "curl -L \"https://github.com/docker/compose/releases/download/1.29.2/docker-compose-\$(uname -s)-\$(uname -m)\" -o /usr/local/bin/docker-compose" >> scripts/before_install.sh
-      - echo "chmod +x /usr/local/bin/docker-compose" >> scripts/before_install.sh
-      - echo "mkdir -p /opt/security-ai/app" >> scripts/before_install.sh
+      - printf '#!/bin/bash\napt-get update -y\napt-get install -y docker.io\ncurl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose\nchmod +x /usr/local/bin/docker-compose\nmkdir -p /opt/security-ai/app\n' > scripts/before_install.sh
       - chmod +x scripts/before_install.sh
-      - echo "version: 0.0" > appspec.yml
-      - echo "os: linux" >> appspec.yml
-      - echo "files:" >> appspec.yml
-      - echo "  - source: /app" >> appspec.yml
-      - echo "    destination: /opt/security-ai/app" >> appspec.yml
-      - echo "  - source: /scripts" >> appspec.yml
-      - echo "    destination: /opt/security-ai/scripts" >> appspec.yml
-      - echo "hooks:" >> appspec.yml
-      - echo "  BeforeInstall:" >> appspec.yml
-      - echo "    - location: scripts/before_install.sh" >> appspec.yml
-      - echo "      timeout: 300" >> appspec.yml
-      - echo "      runas: root" >> appspec.yml
-      - echo "  ApplicationStart:" >> appspec.yml
-      - echo "    - location: scripts/deploy.sh" >> appspec.yml
-      - echo "      timeout: 300" >> appspec.yml
-      - echo "      runas: root" >> appspec.yml
-      - echo "  ValidateService:" >> appspec.yml
-      - echo "    - location: scripts/health_check.sh" >> appspec.yml
-      - echo "      timeout: 300" >> appspec.yml
-      - echo "      runas: root" >> appspec.yml
+      - printf 'version: 0.0\nos: linux\nfiles:\n  - source: /app\n    destination: /opt/security-ai/app\n  - source: /scripts\n    destination: /opt/security-ai/scripts\nhooks:\n  BeforeInstall:\n    - location: scripts/before_install.sh\n      timeout: 300\n      runas: root\n  ApplicationStart:\n    - location: scripts/deploy.sh\n      timeout: 300\n      runas: root\n  ValidateService:\n    - location: scripts/health_check.sh\n      timeout: 300\n      runas: root\n' > appspec.yml
 
 artifacts:
   files:
