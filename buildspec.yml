@@ -32,26 +32,28 @@ phases:
         retries = 3
         EOL
       
-      # Create dynamic inventory with key-based auth OR password-based auth
-      - echo "[cloudsecure_instances]" > ansible/dynamic_inventory.ini
+      # Create private key file from environment variable
+      - |
+        echo "$SSH_PRIVATE_KEY" > /tmp/private_key.pem
+        chmod 600 /tmp/private_key.pem
       
-      # OPTION 1: Use password authentication instead of key-based auth
-      - echo "$INSTANCE_IP ansible_user=ubuntu ansible_password=$EC2_PASSWORD" >> ansible/dynamic_inventory.ini
+      # Create dynamic inventory with key authentication
+      - |
+        cat > ansible/dynamic_inventory.ini << EOL
+        [cloudsecure_instances]
+        $INSTANCE_IP ansible_user=ubuntu ansible_ssh_private_key_file=/tmp/private_key.pem
+        
+        [cloudsecure_instances:vars]
+        ansible_python_interpreter=/usr/bin/python3
+        EOL
       
-      # OPTION 2: If you still want to use key authentication, create a key file first
-      # - |
-      #   cat > /tmp/private_key.pem << 'EOL'
-      #   -----BEGIN RSA PRIVATE KEY-----
-      #   YOUR_PRIVATE_KEY_CONTENT_HERE
-      #   -----END RSA PRIVATE KEY-----
-      #   EOL
-      #   chmod 600 /tmp/private_key.pem
-      #   echo "$INSTANCE_IP ansible_user=ubuntu ansible_ssh_private_key_file=/tmp/private_key.pem" >> ansible/dynamic_inventory.ini
+      # Display inventory for debugging
+      - cat ansible/dynamic_inventory.ini
       
-      - echo "[cloudsecure_instances:vars]" >> ansible/dynamic_inventory.ini
-      - echo "ansible_python_interpreter=/usr/bin/python3" >> ansible/dynamic_inventory.ini
+      # Test SSH connectivity first
+      - ansible cloudsecure_instances -i ansible/dynamic_inventory.ini -m ping -v
       
-      # Run Ansible with proper error handling
+      # Run Ansible playbook
       - |
         cd ansible
         if ansible-playbook -i dynamic_inventory.ini deploy.yml -v; then
