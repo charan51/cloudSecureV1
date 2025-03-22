@@ -174,6 +174,18 @@ resource "aws_iam_role_policy" "codepipeline_policy" {
         ],
         Resource = "*",
         Effect = "Allow"
+      },
+      {
+        Action = [
+          "codedeploy:CreateDeployment",
+          "codedeploy:GetApplication",
+          "codedeploy:GetApplicationRevision",
+          "codedeploy:GetDeployment",
+          "codedeploy:GetDeploymentConfig",
+          "codedeploy:RegisterApplicationRevision"
+        ],
+        Resource = "*",
+        Effect = "Allow"
       }
     ]
   })
