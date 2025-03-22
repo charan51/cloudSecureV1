@@ -4,12 +4,15 @@ phases:
   install:
     runtime-versions:
       python: 3.9
-      nodejs: 16
+      nodejs: 12
     commands:
       - echo Installing dependencies...
       - apt-get update -y
-      - apt-get install -y docker.io docker-compose jq awscli
+      - apt-get install -y docker.io jq awscli
       - docker --version
+      - echo "Installing Docker Compose..."
+      - curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+      - chmod +x /usr/local/bin/docker-compose
       - docker-compose --version
 
   pre_build:
