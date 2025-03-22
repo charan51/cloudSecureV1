@@ -6,17 +6,25 @@ phases:
       nodejs: 12
     commands:
       - echo "Starting installation"
-      - apt-get update -y
-      - apt-get install -y docker.io curl
+      - if command -v apt-get >/dev/null 2>&1; then
+          echo "Using apt-get (Ubuntu/Debian)";
+          apt-get update -y;
+          apt-get install -y docker.io curl;
+        else
+          echo "Using yum (Amazon Linux)";
+          yum update -y;
+          amazon-linux-extras install docker -y || yum install -y docker;
+          yum install -y curl;
+        fi
       - curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
       - chmod +x /usr/local/bin/docker-compose
   
   pre_build:
     commands:
       - echo "Starting pre-build phase"
-      - service docker start || true
-      - docker --version
-      - docker-compose --version
+      - systemctl start docker || service docker start || true
+      - docker --version || echo "Docker not installed properly"
+      - docker-compose --version || echo "Docker-compose not installed properly"
   
   build:
     commands:
@@ -51,14 +59,28 @@ phases:
         EOL
       - chmod +x scripts/health_check.sh
       
-      # Create installation script
+      # Create installation script that works for both Ubuntu and Amazon Linux
       - |
         cat > scripts/before_install.sh << 'EOL'
         #!/bin/bash
-        apt-get update -y
-        apt-get install -y docker.io
+        if command -v apt-get >/dev/null 2>&1; then
+          # Ubuntu/Debian
+          apt-get update -y
+          apt-get install -y docker.io
+        else
+          # Amazon Linux
+          yum update -y
+          amazon-linux-extras install docker -y || yum install -y docker
+        fi
+        
+        # Start Docker
+        systemctl start docker || service docker start || true
+        
+        # Install Docker Compose
         curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
         chmod +x /usr/local/bin/docker-compose
+        
+        # Create app directory
         mkdir -p /opt/security-ai/app
         EOL
       - chmod +x scripts/before_install.sh
