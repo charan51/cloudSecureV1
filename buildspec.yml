@@ -7,8 +7,19 @@ phases:
       nodejs: 12
     commands:
       - echo Installing dependencies...
-      - apt-get update -y
-      - apt-get install -y docker.io jq awscli
+      # Check for package manager and install Docker
+      - |
+        if command -v yum &> /dev/null; then
+          echo "Using yum package manager..."
+          yum update -y
+          amazon-linux-extras install docker -y
+          yum install -y jq awscli
+        else
+          echo "Using apt package manager..."
+          apt-get update -y
+          apt-get install -y docker.io jq awscli
+        fi
+      - systemctl start docker || service docker start || true
       - docker --version
       - echo "Installing Docker Compose..."
       - curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
