@@ -8,17 +8,7 @@ phases:
     commands:
       - echo Installing dependencies...
       # Check for package manager and install Docker
-      - |
-        if command -v yum &> /dev/null; then
-          echo "Using yum package manager..."
-          yum update -y
-          amazon-linux-extras install docker -y
-          yum install -y jq awscli
-        else
-          echo "Using apt package manager..."
-          apt-get update -y
-          apt-get install -y docker.io jq awscli
-        fi
+      - if command -v yum &> /dev/null; then echo "Using yum package manager..."; yum update -y; amazon-linux-extras install docker -y; yum install -y jq awscli; else echo "Using apt package manager..."; apt-get update -y; apt-get install -y docker.io jq awscli; fi
       - systemctl start docker || service docker start || true
       - docker --version
       - echo "Installing Docker Compose..."
@@ -39,131 +29,94 @@ phases:
       - echo Build started on `date`
       - echo Building Docker images...
       - cd app
-      
-      # Build client and server images
       - docker-compose build
-      
-      # Tag images with the commit hash
       - docker tag cloudsecurev1_client:latest cloudsecurev1_client:$IMAGE_TAG
       - docker tag cloudsecurev1_server:latest cloudsecurev1_server:$IMAGE_TAG
       
-      # Create a deployment script to be used by CodeDeploy
-      - |
-        cat > ../scripts/deploy.sh << 'EOF'
-        #!/bin/bash
-        echo "Deploying application..."
-        
-        cd /opt/security-ai/app
-        
-        # Stop any running containers
-        docker-compose down
-        
-        # Start the containers
-        docker-compose up -d
-        
-        echo "Deployment completed on $(date)"
-        EOF
-      - chmod +x ../scripts/deploy.sh
-      
-      # Create script to check application health
-      - |
-        cat > ../scripts/health_check.sh << 'EOF'
-        #!/bin/bash
-        echo "Checking application health..."
-        
-        # Wait for the application to start
-        sleep 15
-        
-        # Check if server is responding
-        if curl -s http://localhost:5000/health; then
-          echo "Server application is healthy"
-          
-          # Check if client is responding
-          if curl -s http://localhost:3000; then
-            echo "Client application is healthy"
-            exit 0
-          else
-            echo "Client application health check failed"
-            exit 1
-          fi
-        else
-          echo "Server application health check failed"
-          exit 1
-        fi
-        EOF
-      - chmod +x ../scripts/health_check.sh
+      # Create deployment scripts using echo instead of heredoc
       - cd ..
+      - echo '#!/bin/bash' > scripts/deploy.sh
+      - echo 'echo "Deploying application..."' >> scripts/deploy.sh
+      - echo 'cd /opt/security-ai/app' >> scripts/deploy.sh
+      - echo 'docker-compose down' >> scripts/deploy.sh
+      - echo 'docker-compose up -d' >> scripts/deploy.sh
+      - echo 'echo "Deployment completed on $(date)"' >> scripts/deploy.sh
+      - chmod +x scripts/deploy.sh
+      
+      # Health check script
+      - echo '#!/bin/bash' > scripts/health_check.sh
+      - echo 'echo "Checking application health..."' >> scripts/health_check.sh
+      - echo 'sleep 15' >> scripts/health_check.sh
+      - echo 'if curl -s http://localhost:5000/health; then' >> scripts/health_check.sh
+      - echo '  echo "Server application is healthy"' >> scripts/health_check.sh
+      - echo '  if curl -s http://localhost:3000; then' >> scripts/health_check.sh
+      - echo '    echo "Client application is healthy"' >> scripts/health_check.sh
+      - echo '    exit 0' >> scripts/health_check.sh
+      - echo '  else' >> scripts/health_check.sh
+      - echo '    echo "Client application health check failed"' >> scripts/health_check.sh
+      - echo '    exit 1' >> scripts/health_check.sh
+      - echo '  fi' >> scripts/health_check.sh
+      - echo 'else' >> scripts/health_check.sh
+      - echo '  echo "Server application health check failed"' >> scripts/health_check.sh
+      - echo '  exit 1' >> scripts/health_check.sh
+      - echo 'fi' >> scripts/health_check.sh
+      - chmod +x scripts/health_check.sh
 
   post_build:
     commands:
       - echo Build completed on `date`
-      - echo Saving application files...
+      - echo Creating appspec.yml...
+      - echo 'version: 0.0' > appspec.yml
+      - echo 'os: linux' >> appspec.yml
+      - echo 'files:' >> appspec.yml
+      - echo '  - source: /app' >> appspec.yml
+      - echo '    destination: /opt/security-ai/app' >> appspec.yml
+      - echo '  - source: /scripts' >> appspec.yml
+      - echo '    destination: /opt/security-ai/scripts' >> appspec.yml
+      - echo 'hooks:' >> appspec.yml
+      - echo '  BeforeInstall:' >> appspec.yml
+      - echo '    - location: scripts/before_install.sh' >> appspec.yml
+      - echo '      timeout: 300' >> appspec.yml
+      - echo '      runas: root' >> appspec.yml
+      - echo '  AfterInstall:' >> appspec.yml
+      - echo '    - location: scripts/after_install.sh' >> appspec.yml
+      - echo '      timeout: 300' >> appspec.yml
+      - echo '      runas: root' >> appspec.yml
+      - echo '  ApplicationStart:' >> appspec.yml
+      - echo '    - location: scripts/deploy.sh' >> appspec.yml
+      - echo '      timeout: 300' >> appspec.yml
+      - echo '      runas: root' >> appspec.yml
+      - echo '  ValidateService:' >> appspec.yml
+      - echo '    - location: scripts/health_check.sh' >> appspec.yml
+      - echo '      timeout: 300' >> appspec.yml
+      - echo '      runas: root' >> appspec.yml
       
-      # Create the appspec.yml file required by CodeDeploy
-      - |
-        cat > appspec.yml << 'EOF'
-        version: 0.0
-        os: linux
-        files:
-          - source: /app
-            destination: /opt/security-ai/app
-          - source: /scripts
-            destination: /opt/security-ai/scripts
-        hooks:
-          BeforeInstall:
-            - location: scripts/before_install.sh
-              timeout: 300
-              runas: root
-          AfterInstall:
-            - location: scripts/after_install.sh
-              timeout: 300
-              runas: root
-          ApplicationStart:
-            - location: scripts/deploy.sh
-              timeout: 300
-              runas: root
-          ValidateService:
-            - location: scripts/health_check.sh
-              timeout: 300
-              runas: root
-        EOF
-      
-      # Create additional required scripts
-      - |
-        cat > scripts/before_install.sh << 'EOF'
-        #!/bin/bash
-        echo "Running before install steps..."
-        
-        # Install Docker if not installed
-        if ! [ -x "$(command -v docker)" ]; then
-          apt-get update -y
-          apt-get install -y docker.io
-          systemctl start docker
-          systemctl enable docker
-        fi
-        
-        # Install Docker Compose if not installed
-        if ! [ -x "$(command -v docker-compose)" ]; then
-          curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-          chmod +x /usr/local/bin/docker-compose
-        fi
-        
-        # Create application directory if it doesn't exist
-        mkdir -p /opt/security-ai/app
-        EOF
+      # Create before_install script
+      - echo '#!/bin/bash' > scripts/before_install.sh
+      - echo 'echo "Running before install steps..."' >> scripts/before_install.sh
+      - echo 'if ! [ -x "$(command -v docker)" ]; then' >> scripts/before_install.sh
+      - echo '  if command -v yum &> /dev/null; then' >> scripts/before_install.sh
+      - echo '    yum update -y' >> scripts/before_install.sh
+      - echo '    amazon-linux-extras install docker -y' >> scripts/before_install.sh
+      - echo '  else' >> scripts/before_install.sh
+      - echo '    apt-get update -y' >> scripts/before_install.sh
+      - echo '    apt-get install -y docker.io' >> scripts/before_install.sh
+      - echo '  fi' >> scripts/before_install.sh
+      - echo '  systemctl start docker || service docker start' >> scripts/before_install.sh
+      - echo '  systemctl enable docker || chkconfig docker on' >> scripts/before_install.sh
+      - echo 'fi' >> scripts/before_install.sh
+      - echo 'if ! [ -x "$(command -v docker-compose)" ]; then' >> scripts/before_install.sh
+      - echo '  curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose' >> scripts/before_install.sh
+      - echo '  chmod +x /usr/local/bin/docker-compose' >> scripts/before_install.sh
+      - echo 'fi' >> scripts/before_install.sh
+      - echo 'mkdir -p /opt/security-ai/app' >> scripts/before_install.sh
       - chmod +x scripts/before_install.sh
       
-      - |
-        cat > scripts/after_install.sh << 'EOF'
-        #!/bin/bash
-        echo "Running after install steps..."
-        
-        # Set permissions
-        chmod -R 755 /opt/security-ai
-        
-        # Make sure all files are available
-        ls -la /opt/security-ai/app
-        EOF
+      # Create after_install script
+      - echo '#!/bin/bash' > scripts/after_install.sh
+      - echo 'echo "Running after install steps..."' >> scripts/after_install.sh
+      - echo 'chmod -R 755 /opt/security-ai' >> scripts/after_install.sh
+      - echo 'ls -la /opt/security-ai/app' >> scripts/after_install.sh
       - chmod +x scripts/after_install.sh
 
 artifacts:
