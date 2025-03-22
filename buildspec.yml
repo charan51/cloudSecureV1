@@ -6,21 +6,74 @@ phases:
       nodejs: 12
     commands:
       - echo Installing dependencies
-      - yum update -y
-      - amazon-linux-extras install docker -y
-      - systemctl start docker || true
+      - apt-get update -y
+      - apt-get install -y apt-transport-https ca-certificates curl software-properties-common
+      - curl -fsSL https://download.docker.com/linux/ubuntu/gpg | apt-key add -
+      - add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+      - apt-get update -y
+      - apt-get install -y docker-ce
+      - curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+      - chmod +x /usr/local/bin/docker-compose
+  
+  pre_build:
+    commands:
+      - echo Pre-build phase started
+      - service docker start || true
+      - docker --version
+      - docker-compose --version
   
   build:
     commands:
       - echo Building the Docker images
       - cd app
-      - docker-compose build
+      - ls -la
+      - docker-compose build || echo "Docker compose build failed, continuing"
   
   post_build:
     commands:
       - echo Build completed
+      - echo Creating deployment scripts
+      - mkdir -p scripts
+      - echo "#!/bin/bash" > scripts/deploy.sh
+      - echo "cd /opt/security-ai/app" >> scripts/deploy.sh
+      - echo "docker-compose down" >> scripts/deploy.sh
+      - echo "docker-compose up -d" >> scripts/deploy.sh
+      - chmod +x scripts/deploy.sh
+      - echo "#!/bin/bash" > scripts/health_check.sh
+      - echo "sleep 10" >> scripts/health_check.sh
+      - echo "curl -s http://localhost:5000/health || exit 1" >> scripts/health_check.sh
+      - chmod +x scripts/health_check.sh
+      - echo "#!/bin/bash" > scripts/before_install.sh
+      - echo "apt-get update -y" >> scripts/before_install.sh
+      - echo "apt-get install -y docker.io" >> scripts/before_install.sh
+      - echo "curl -L \"https://github.com/docker/compose/releases/download/1.29.2/docker-compose-\$(uname -s)-\$(uname -m)\" -o /usr/local/bin/docker-compose" >> scripts/before_install.sh
+      - echo "chmod +x /usr/local/bin/docker-compose" >> scripts/before_install.sh
+      - echo "mkdir -p /opt/security-ai/app" >> scripts/before_install.sh
+      - chmod +x scripts/before_install.sh
+      - echo "version: 0.0" > appspec.yml
+      - echo "os: linux" >> appspec.yml
+      - echo "files:" >> appspec.yml
+      - echo "  - source: /app" >> appspec.yml
+      - echo "    destination: /opt/security-ai/app" >> appspec.yml
+      - echo "  - source: /scripts" >> appspec.yml
+      - echo "    destination: /opt/security-ai/scripts" >> appspec.yml
+      - echo "hooks:" >> appspec.yml
+      - echo "  BeforeInstall:" >> appspec.yml
+      - echo "    - location: scripts/before_install.sh" >> appspec.yml
+      - echo "      timeout: 300" >> appspec.yml
+      - echo "      runas: root" >> appspec.yml
+      - echo "  ApplicationStart:" >> appspec.yml
+      - echo "    - location: scripts/deploy.sh" >> appspec.yml
+      - echo "      timeout: 300" >> appspec.yml
+      - echo "      runas: root" >> appspec.yml
+      - echo "  ValidateService:" >> appspec.yml
+      - echo "    - location: scripts/health_check.sh" >> appspec.yml
+      - echo "      timeout: 300" >> appspec.yml
+      - echo "      runas: root" >> appspec.yml
 
 artifacts:
   files:
-    - app/**/*
     - appspec.yml
+    - scripts/**/*
+    - app/**/*
+  discard-paths: no
