@@ -5,61 +5,88 @@ phases:
     runtime-versions:
       nodejs: 12
     commands:
-      - echo Installing dependencies
+      - echo "Starting installation"
       - apt-get update -y
       - apt-get install -y docker.io curl
+      - curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+      - chmod +x /usr/local/bin/docker-compose
   
   pre_build:
     commands:
-      - echo Pre-build started
+      - echo "Starting pre-build phase"
       - service docker start || true
+      - docker --version
+      - docker-compose --version
   
   build:
     commands:
-      - echo Building application
-      - cd app
+      - echo "Starting build phase"
+      - pwd
       - ls -la
-      - mkdir -p ../scripts
-      - echo '#!/bin/bash' > ../scripts/deploy.sh
-      - echo 'cd /opt/security-ai/app' >> ../scripts/deploy.sh
-      - echo 'docker-compose down' >> ../scripts/deploy.sh
-      - echo 'docker-compose up -d' >> ../scripts/deploy.sh
-      - chmod +x ../scripts/deploy.sh
-      - echo '#!/bin/bash' > ../scripts/health_check.sh
-      - echo 'sleep 10' >> ../scripts/health_check.sh
-      - echo 'curl -s http://localhost:5000/health || exit 1' >> ../scripts/health_check.sh
-      - chmod +x ../scripts/health_check.sh
-      - echo '#!/bin/bash' > ../scripts/before_install.sh
-      - echo 'apt-get update -y' >> ../scripts/before_install.sh
-      - echo 'apt-get install -y docker.io' >> ../scripts/before_install.sh
-      - echo 'curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose' >> ../scripts/before_install.sh
-      - echo 'chmod +x /usr/local/bin/docker-compose' >> ../scripts/before_install.sh
-      - echo 'mkdir -p /opt/security-ai/app' >> ../scripts/before_install.sh
-      - chmod +x ../scripts/before_install.sh
+      - mkdir -p scripts
+      - cd app || echo "No app directory found"
+      - ls -la || echo "Empty directory"
+      - docker-compose build || echo "Docker compose build failed"
+      - cd ..
   
   post_build:
     commands:
-      - echo Build complete
-      - echo 'version: 0.0' > appspec.yml
-      - echo 'os: linux' >> appspec.yml
-      - echo 'files:' >> appspec.yml
-      - echo '  - source: /app' >> appspec.yml
-      - echo '    destination: /opt/security-ai/app' >> appspec.yml
-      - echo '  - source: /scripts' >> appspec.yml
-      - echo '    destination: /opt/security-ai/scripts' >> appspec.yml
-      - echo 'hooks:' >> appspec.yml
-      - echo '  BeforeInstall:' >> appspec.yml
-      - echo '    - location: scripts/before_install.sh' >> appspec.yml
-      - echo '      timeout: 300' >> appspec.yml
-      - echo '      runas: root' >> appspec.yml
-      - echo '  ApplicationStart:' >> appspec.yml
-      - echo '    - location: scripts/deploy.sh' >> appspec.yml
-      - echo '      timeout: 300' >> appspec.yml
-      - echo '      runas: root' >> appspec.yml
-      - echo '  ValidateService:' >> appspec.yml
-      - echo '    - location: scripts/health_check.sh' >> appspec.yml
-      - echo '      timeout: 300' >> appspec.yml
-      - echo '      runas: root' >> appspec.yml
+      - echo "Starting post-build phase"
+      # Create deployment script
+      - |
+        cat > scripts/deploy.sh << 'EOL'
+        #!/bin/bash
+        cd /opt/security-ai/app
+        docker-compose down
+        docker-compose up -d
+        EOL
+      - chmod +x scripts/deploy.sh
+      
+      # Create health check script
+      - |
+        cat > scripts/health_check.sh << 'EOL'
+        #!/bin/bash
+        sleep 10
+        curl -s http://localhost:5000/health || exit 1
+        EOL
+      - chmod +x scripts/health_check.sh
+      
+      # Create installation script
+      - |
+        cat > scripts/before_install.sh << 'EOL'
+        #!/bin/bash
+        apt-get update -y
+        apt-get install -y docker.io
+        curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+        chmod +x /usr/local/bin/docker-compose
+        mkdir -p /opt/security-ai/app
+        EOL
+      - chmod +x scripts/before_install.sh
+      
+      # Create appspec.yml
+      - |
+        cat > appspec.yml << 'EOL'
+        version: 0.0
+        os: linux
+        files:
+          - source: /app
+            destination: /opt/security-ai/app
+          - source: /scripts
+            destination: /opt/security-ai/scripts
+        hooks:
+          BeforeInstall:
+            - location: scripts/before_install.sh
+              timeout: 300
+              runas: root
+          ApplicationStart:
+            - location: scripts/deploy.sh
+              timeout: 300
+              runas: root
+          ValidateService:
+            - location: scripts/health_check.sh
+              timeout: 300
+              runas: root
+        EOL
 
 artifacts:
   files:
