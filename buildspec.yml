@@ -6,118 +6,67 @@ phases:
       python: 3.9
       nodejs: 12
     commands:
-      - echo Installing dependencies...
-      # Check for package manager and install Docker
-      - if command -v yum &> /dev/null; then echo "Using yum package manager..."; yum update -y; amazon-linux-extras install docker -y; yum install -y jq awscli; else echo "Using apt package manager..."; apt-get update -y; apt-get install -y docker.io jq awscli; fi
-      - systemctl start docker || service docker start || true
-      - docker --version
-      - echo "Installing Docker Compose..."
+      - echo Installing dependencies
+      - yum update -y
+      - amazon-linux-extras install docker -y
+      - yum install -y jq
+      - systemctl start docker || true
       - curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
       - chmod +x /usr/local/bin/docker-compose
-      - docker-compose --version
 
   pre_build:
     commands:
-      - echo Pre-build phase started on `date`
-      - COMMIT_HASH=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
-      - IMAGE_TAG=${COMMIT_HASH:=latest}
-      - echo Creating deployment scripts directory
+      - echo Pre-build phase started
       - mkdir -p scripts
 
   build:
     commands:
-      - echo Build started on `date`
-      - echo Building Docker images...
+      - echo Build started
       - cd app
       - docker-compose build
-      - docker tag cloudsecurev1_client:latest cloudsecurev1_client:$IMAGE_TAG
-      - docker tag cloudsecurev1_server:latest cloudsecurev1_server:$IMAGE_TAG
-      
-      # Create deployment scripts using echo instead of heredoc
       - cd ..
-      - echo '#!/bin/bash' > scripts/deploy.sh
-      - echo 'echo "Deploying application..."' >> scripts/deploy.sh
-      - echo 'cd /opt/security-ai/app' >> scripts/deploy.sh
-      - echo 'docker-compose down' >> scripts/deploy.sh
-      - echo 'docker-compose up -d' >> scripts/deploy.sh
-      - echo 'echo "Deployment completed on $(date)"' >> scripts/deploy.sh
+      - echo "#!/bin/bash" > scripts/deploy.sh
+      - echo "cd /opt/security-ai/app" >> scripts/deploy.sh
+      - echo "docker-compose down" >> scripts/deploy.sh
+      - echo "docker-compose up -d" >> scripts/deploy.sh
       - chmod +x scripts/deploy.sh
-      
-      # Health check script
-      - echo '#!/bin/bash' > scripts/health_check.sh
-      - echo 'echo "Checking application health..."' >> scripts/health_check.sh
-      - echo 'sleep 15' >> scripts/health_check.sh
-      - echo 'if curl -s http://localhost:5000/health; then' >> scripts/health_check.sh
-      - echo '  echo "Server application is healthy"' >> scripts/health_check.sh
-      - echo '  if curl -s http://localhost:3000; then' >> scripts/health_check.sh
-      - echo '    echo "Client application is healthy"' >> scripts/health_check.sh
-      - echo '    exit 0' >> scripts/health_check.sh
-      - echo '  else' >> scripts/health_check.sh
-      - echo '    echo "Client application health check failed"' >> scripts/health_check.sh
-      - echo '    exit 1' >> scripts/health_check.sh
-      - echo '  fi' >> scripts/health_check.sh
-      - echo 'else' >> scripts/health_check.sh
-      - echo '  echo "Server application health check failed"' >> scripts/health_check.sh
-      - echo '  exit 1' >> scripts/health_check.sh
-      - echo 'fi' >> scripts/health_check.sh
+      - echo "#!/bin/bash" > scripts/health_check.sh
+      - echo "sleep 15" >> scripts/health_check.sh
+      - echo "curl -s http://localhost:5000/health || exit 1" >> scripts/health_check.sh
+      - echo "exit 0" >> scripts/health_check.sh
       - chmod +x scripts/health_check.sh
 
   post_build:
     commands:
-      - echo Build completed on `date`
-      - echo Creating appspec.yml...
-      - echo 'version: 0.0' > appspec.yml
-      - echo 'os: linux' >> appspec.yml
-      - echo 'files:' >> appspec.yml
-      - echo '  - source: /app' >> appspec.yml
-      - echo '    destination: /opt/security-ai/app' >> appspec.yml
-      - echo '  - source: /scripts' >> appspec.yml
-      - echo '    destination: /opt/security-ai/scripts' >> appspec.yml
-      - echo 'hooks:' >> appspec.yml
-      - echo '  BeforeInstall:' >> appspec.yml
-      - echo '    - location: scripts/before_install.sh' >> appspec.yml
-      - echo '      timeout: 300' >> appspec.yml
-      - echo '      runas: root' >> appspec.yml
-      - echo '  AfterInstall:' >> appspec.yml
-      - echo '    - location: scripts/after_install.sh' >> appspec.yml
-      - echo '      timeout: 300' >> appspec.yml
-      - echo '      runas: root' >> appspec.yml
-      - echo '  ApplicationStart:' >> appspec.yml
-      - echo '    - location: scripts/deploy.sh' >> appspec.yml
-      - echo '      timeout: 300' >> appspec.yml
-      - echo '      runas: root' >> appspec.yml
-      - echo '  ValidateService:' >> appspec.yml
-      - echo '    - location: scripts/health_check.sh' >> appspec.yml
-      - echo '      timeout: 300' >> appspec.yml
-      - echo '      runas: root' >> appspec.yml
-      
-      # Create before_install script
-      - echo '#!/bin/bash' > scripts/before_install.sh
-      - echo 'echo "Running before install steps..."' >> scripts/before_install.sh
-      - echo 'if ! [ -x "$(command -v docker)" ]; then' >> scripts/before_install.sh
-      - echo '  if command -v yum &> /dev/null; then' >> scripts/before_install.sh
-      - echo '    yum update -y' >> scripts/before_install.sh
-      - echo '    amazon-linux-extras install docker -y' >> scripts/before_install.sh
-      - echo '  else' >> scripts/before_install.sh
-      - echo '    apt-get update -y' >> scripts/before_install.sh
-      - echo '    apt-get install -y docker.io' >> scripts/before_install.sh
-      - echo '  fi' >> scripts/before_install.sh
-      - echo '  systemctl start docker || service docker start' >> scripts/before_install.sh
-      - echo '  systemctl enable docker || chkconfig docker on' >> scripts/before_install.sh
-      - echo 'fi' >> scripts/before_install.sh
-      - echo 'if ! [ -x "$(command -v docker-compose)" ]; then' >> scripts/before_install.sh
-      - echo '  curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose' >> scripts/before_install.sh
-      - echo '  chmod +x /usr/local/bin/docker-compose' >> scripts/before_install.sh
-      - echo 'fi' >> scripts/before_install.sh
-      - echo 'mkdir -p /opt/security-ai/app' >> scripts/before_install.sh
+      - echo Build completed
+      - echo "version: 0.0" > appspec.yml
+      - echo "os: linux" >> appspec.yml
+      - echo "files:" >> appspec.yml
+      - echo "  - source: /app" >> appspec.yml
+      - echo "    destination: /opt/security-ai/app" >> appspec.yml
+      - echo "  - source: /scripts" >> appspec.yml
+      - echo "    destination: /opt/security-ai/scripts" >> appspec.yml
+      - echo "hooks:" >> appspec.yml
+      - echo "  BeforeInstall:" >> appspec.yml
+      - echo "    - location: scripts/before_install.sh" >> appspec.yml
+      - echo "      timeout: 300" >> appspec.yml
+      - echo "      runas: root" >> appspec.yml
+      - echo "  ApplicationStart:" >> appspec.yml
+      - echo "    - location: scripts/deploy.sh" >> appspec.yml
+      - echo "      timeout: 300" >> appspec.yml
+      - echo "      runas: root" >> appspec.yml
+      - echo "  ValidateService:" >> appspec.yml
+      - echo "    - location: scripts/health_check.sh" >> appspec.yml
+      - echo "      timeout: 300" >> appspec.yml
+      - echo "      runas: root" >> appspec.yml
+      - echo "#!/bin/bash" > scripts/before_install.sh
+      - echo "yum update -y" >> scripts/before_install.sh
+      - echo "amazon-linux-extras install docker -y" >> scripts/before_install.sh
+      - echo "systemctl start docker" >> scripts/before_install.sh
+      - echo "curl -L \"https://github.com/docker/compose/releases/download/1.29.2/docker-compose-\$(uname -s)-\$(uname -m)\" -o /usr/local/bin/docker-compose" >> scripts/before_install.sh
+      - echo "chmod +x /usr/local/bin/docker-compose" >> scripts/before_install.sh
+      - echo "mkdir -p /opt/security-ai/app" >> scripts/before_install.sh
       - chmod +x scripts/before_install.sh
-      
-      # Create after_install script
-      - echo '#!/bin/bash' > scripts/after_install.sh
-      - echo 'echo "Running after install steps..."' >> scripts/after_install.sh
-      - echo 'chmod -R 755 /opt/security-ai' >> scripts/after_install.sh
-      - echo 'ls -la /opt/security-ai/app' >> scripts/after_install.sh
-      - chmod +x scripts/after_install.sh
 
 artifacts:
   files:
