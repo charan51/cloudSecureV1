@@ -12,12 +12,12 @@ phases:
       - echo "Starting build phase"
       - mkdir -p app scripts
       - echo "Hello World" > app/test.txt
+      # Add your actual application build steps here
   
   post_build:
     commands:
       - echo "Starting post-build phase"
       
-      # Option 1: CodeDeploy Approach (recommended)
       # Create deployment script
       - |
         cat > scripts/deploy.sh << 'EOL'
@@ -81,109 +81,11 @@ phases:
               runas: root
         EOL
       
-      # Option 2: Ansible Approach (if you still want to try it)
-      # Create ansible config
-      - |
-        cat > ansible/ansible.cfg << 'EOL'
-        [defaults]
-        host_key_checking = False
-        timeout = 30
-        pipelining = True
-        
-        [ssh_connection]
-        retries = 3
-        ssh_args = -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
-        EOL
-      
-      # Create Ansible inventory with CORRECT USERNAME
-      - |
-        cat > ansible/inventory.ini << EOL
-        [cloudsecure_instances]
-        $INSTANCE_IP ansible_user=ec2-user ansible_ssh_private_key_file=/tmp/private_key.pem
-        
-        [cloudsecure_instances:vars]
-        ansible_python_interpreter=/usr/bin/python3
-        EOL
-      
-      # Generate a temporary SSH key
-      - |
-        echo "Generating temporary SSH key..."
-        ssh-keygen -t rsa -f /tmp/private_key.pem -N "" -q
-        chmod 600 /tmp/private_key.pem
-        
-        echo "==================== IMPORTANT ====================>"
-        echo "ADD THIS PUBLIC KEY TO YOUR EC2 INSTANCE:"
-        echo "--------------------------------------------------"
-        ssh-keygen -y -f /tmp/private_key.pem
-        echo "--------------------------------------------------"
-        echo "RUN THIS COMMAND ON YOUR EC2 INSTANCE:"
-        echo 'echo "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDVEJCGFlCYokgd7ACvQEPDJho1oEg1CZI2nw85lSXmeuoBhhX9xgdEwuvuO796Q2nYZyX4KBChsTa20NXqoL3vJUFzat4RifqlalazPbVFznPV/yRFUBvFuUu/UQPHfux5d9qUt4uR4UqrQtdvm+CPHtSw3jdSDBCK3xLb/AARyJ06NJZ+Q++guvaWS+bIdxPIuLf0AQTCxOJvXLENFhrcgbAkh/tOZ3j9+0vQzIK5H7LqkpC95/t5O2WQN4b6yKmTJkW2+SFKDFthY3GY/zjBWOn6/ObK4PTlU/JLK2UAheoaDDGtO+veqRHJwhtzPukV7kE+5fO24mFzINcTPNdZ" >> ~/.ssh/authorized_keys'
-        echo "<==================== IMPORTANT ====================>"
-      
-      # Create simplified test playbook
-      - |
-        cat > ansible/test.yml << 'EOL'
-        ---
-        - name: Test connectivity
-          hosts: cloudsecure_instances
-          gather_facts: no
-          tasks:
-            - name: Wait for connection
-              wait_for_connection:
-                timeout: 60
-                
-            - name: Ping test
-              ping:
-              
-            - name: Get hostname
-              command: hostname
-              register: hostname
-              
-            - name: Show hostname
-              debug:
-                msg: "Successfully connected to {{ hostname.stdout }}"
-        EOL
-      
-      # Wait for key to be added
-      - |
-        echo "Waiting 5 minutes for you to add the public key to your EC2 instance..."
-        echo "Sleeping for 30 seconds at a time. Press Ctrl+C in AWS console to cancel build if needed."
-        
-        for i in {1..10}; do
-          echo "Waited $((i*30)) seconds out of 300..."
-          sleep 30
-          
-          # Try connecting every 30 seconds to see if key is added
-          if ssh -i /tmp/private_key.pem -o StrictHostKeyChecking=no -o ConnectTimeout=5 ec2-user@$INSTANCE_IP "echo Connected successfully" &>/dev/null; then
-            echo "✅ SSH connection successful! Continuing with Ansible..."
-            break
-          else
-            echo "❌ SSH connection failed. Please add the key to your EC2 instance."
-            if [ $i -eq 10 ]; then
-              echo "Timeout waiting for SSH connection. Exiting."
-              exit 1
-            fi
-          fi
-        done
-      
-      # Run the test playbook
-      - |
-        cd ansible
-        echo "Running test playbook..."
-        ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook -i inventory.ini test.yml -v
-        
-        if [ $? -eq 0 ]; then
-          echo "✅ Test playbook succeeded! Running main playbook..."
-          ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook -i inventory.ini deploy.yml -v || echo "❌ Main playbook failed"
-        else
-          echo "❌ Test playbook failed. Exiting."
-          exit 1
-        fi
+      - echo "CodeDeploy configuration created successfully"
 
 artifacts:
   files:
     - appspec.yml
     - scripts/**/*
     - app/**/*
-    - ansible/**/*
   discard-paths: no
