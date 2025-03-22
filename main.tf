@@ -296,8 +296,8 @@ resource "aws_codepipeline" "security_ai" {
       
       configuration = {
         ConnectionArn    = aws_codestarconnections_connection.github.arn
-        FullRepositoryId = "Dev2-AI-Cloud-Security/CloudSecure"  # Replace with your repo
-        BranchName       = "cicd_v1"  # Only deploy from main branch
+        FullRepositoryId = "charan51/cloudSecureV1"  # Replace with your repo
+        BranchName       = "main"  # Only deploy from main branch
       }
     }
   }

@@ -1,0 +1,160 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.9
+      nodejs: 16
+    commands:
+      - echo Installing dependencies...
+      - apt-get update -y
+      - apt-get install -y docker.io docker-compose jq awscli
+      - docker --version
+      - docker-compose --version
+
+  pre_build:
+    commands:
+      - echo Pre-build phase started on `date`
+      - COMMIT_HASH=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
+      - IMAGE_TAG=${COMMIT_HASH:=latest}
+      - echo Creating deployment scripts directory
+      - mkdir -p scripts
+
+  build:
+    commands:
+      - echo Build started on `date`
+      - echo Building Docker images...
+      - cd app
+      
+      # Build client and server images
+      - docker-compose build
+      
+      # Tag images with the commit hash
+      - docker tag cloudsecurev1_client:latest cloudsecurev1_client:$IMAGE_TAG
+      - docker tag cloudsecurev1_server:latest cloudsecurev1_server:$IMAGE_TAG
+      
+      # Create a deployment script to be used by CodeDeploy
+      - |
+        cat > ../scripts/deploy.sh << 'EOF'
+        #!/bin/bash
+        echo "Deploying application..."
+        
+        cd /opt/security-ai/app
+        
+        # Stop any running containers
+        docker-compose down
+        
+        # Start the containers
+        docker-compose up -d
+        
+        echo "Deployment completed on $(date)"
+        EOF
+      - chmod +x ../scripts/deploy.sh
+      
+      # Create script to check application health
+      - |
+        cat > ../scripts/health_check.sh << 'EOF'
+        #!/bin/bash
+        echo "Checking application health..."
+        
+        # Wait for the application to start
+        sleep 15
+        
+        # Check if server is responding
+        if curl -s http://localhost:5000/health; then
+          echo "Server application is healthy"
+          
+          # Check if client is responding
+          if curl -s http://localhost:3000; then
+            echo "Client application is healthy"
+            exit 0
+          else
+            echo "Client application health check failed"
+            exit 1
+          fi
+        else
+          echo "Server application health check failed"
+          exit 1
+        fi
+        EOF
+      - chmod +x ../scripts/health_check.sh
+      - cd ..
+
+  post_build:
+    commands:
+      - echo Build completed on `date`
+      - echo Saving application files...
+      
+      # Create the appspec.yml file required by CodeDeploy
+      - |
+        cat > appspec.yml << 'EOF'
+        version: 0.0
+        os: linux
+        files:
+          - source: /app
+            destination: /opt/security-ai/app
+          - source: /scripts
+            destination: /opt/security-ai/scripts
+        hooks:
+          BeforeInstall:
+            - location: scripts/before_install.sh
+              timeout: 300
+              runas: root
+          AfterInstall:
+            - location: scripts/after_install.sh
+              timeout: 300
+              runas: root
+          ApplicationStart:
+            - location: scripts/deploy.sh
+              timeout: 300
+              runas: root
+          ValidateService:
+            - location: scripts/health_check.sh
+              timeout: 300
+              runas: root
+        EOF
+      
+      # Create additional required scripts
+      - |
+        cat > scripts/before_install.sh << 'EOF'
+        #!/bin/bash
+        echo "Running before install steps..."
+        
+        # Install Docker if not installed
+        if ! [ -x "$(command -v docker)" ]; then
+          apt-get update -y
+          apt-get install -y docker.io
+          systemctl start docker
+          systemctl enable docker
+        fi
+        
+        # Install Docker Compose if not installed
+        if ! [ -x "$(command -v docker-compose)" ]; then
+          curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+          chmod +x /usr/local/bin/docker-compose
+        fi
+        
+        # Create application directory if it doesn't exist
+        mkdir -p /opt/security-ai/app
+        EOF
+      - chmod +x scripts/before_install.sh
+      
+      - |
+        cat > scripts/after_install.sh << 'EOF'
+        #!/bin/bash
+        echo "Running after install steps..."
+        
+        # Set permissions
+        chmod -R 755 /opt/security-ai
+        
+        # Make sure all files are available
+        ls -la /opt/security-ai/app
+        EOF
+      - chmod +x scripts/after_install.sh
+
+artifacts:
+  files:
+    - appspec.yml
+    - scripts/**/*
+    - app/**/*
+  discard-paths: no
