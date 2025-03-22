@@ -12,7 +12,6 @@ phases:
       - echo "Starting build phase"
       - mkdir -p app scripts
       - echo "Hello World" > app/test.txt
-      # Add your actual build steps here
       
       # Create a simple Docker Compose file for testing
       - |
@@ -35,10 +34,82 @@ phases:
     commands:
       - echo "Starting post-build phase"
       
-      # Create deployment script - UNCOMMENT DOCKER COMMANDS
+      # Create a ROBUST installation script
+      - |
+        cat > scripts/before_install.sh << 'EOL'
+        #!/bin/bash
+        set -e  # Exit on any error
+
+        echo "Installation started at $(date)"
+        
+        # Create application directory
+        mkdir -p /opt/security-ai/app
+        
+        # Determine Linux distribution
+        if [ -f /etc/os-release ]; then
+            . /etc/os-release
+            OS=$NAME
+        else
+            OS=$(cat /etc/system-release | cut -d ' ' -f 1)
+        fi
+        
+        echo "Detected OS: $OS"
+        
+        # Install Docker based on distribution
+        if [[ "$OS" == *"Amazon Linux"* ]]; then
+            echo "Installing Docker for Amazon Linux..."
+            sudo yum update -y
+            sudo amazon-linux-extras install -y docker
+            
+            # Install Docker Compose v2 plugin
+            DOCKER_CONFIG=${DOCKER_CONFIG:-$HOME/.docker}
+            mkdir -p $DOCKER_CONFIG/cli-plugins
+            COMPOSE_VERSION=v2.23.3
+            ARCH=$(uname -m)
+            sudo curl -SL "https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-linux-${ARCH}" -o /usr/local/bin/docker-compose
+            sudo chmod +x /usr/local/bin/docker-compose
+            sudo ln -sf /usr/local/bin/docker-compose /usr/bin/docker-compose
+            
+        elif [[ "$OS" == *"Ubuntu"* ]] || [[ "$OS" == *"Debian"* ]]; then
+            echo "Installing Docker for Ubuntu/Debian..."
+            sudo apt-get update
+            sudo apt-get install -y apt-transport-https ca-certificates curl software-properties-common
+            curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
+            sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+            sudo apt-get update
+            sudo apt-get install -y docker-ce docker-ce-cli containerd.io
+        else
+            echo "Unsupported OS: $OS"
+            exit 1
+        fi
+        
+        # Start and enable Docker
+        echo "Starting Docker service..."
+        sudo systemctl start docker
+        sudo systemctl enable docker
+        
+        # Add ec2-user to docker group
+        sudo usermod -aG docker ec2-user
+        
+        # Verify Docker installation
+        echo "Verifying Docker installation..."
+        sudo docker --version
+        
+        # Verify Docker Compose installation
+        echo "Verifying Docker Compose installation..."
+        docker-compose --version || echo "Docker Compose not available as 'docker-compose'"
+        docker compose version || echo "Docker Compose not available as 'docker compose'"
+        
+        echo "Installation completed at $(date)"
+        EOL
+      - chmod +x scripts/before_install.sh
+      
+      # Create a ROBUST deployment script
       - |
         cat > scripts/deploy.sh << 'EOL'
         #!/bin/bash
+        set -e  # Exit on any error
+        
         echo "Deployment started at $(date)"
         
         # Application deployment logic
@@ -48,41 +119,43 @@ phases:
         # Create HTML directory if it doesn't exist
         mkdir -p html
         
-        # If using Docker - UNCOMMENTED THE DOCKER COMMANDS
-        if command -v docker &> /dev/null; then
-          echo "Docker is installed, setting up containers..."
-          docker compose down || true
-          docker compose up -d
-          echo "Docker containers started. Check status with: docker ps"
+        # Check Docker status
+        echo "Checking Docker status..."
+        sudo systemctl status docker
+        
+        # Try both Docker Compose commands
+        echo "Running Docker Compose..."
+        if command -v docker-compose &> /dev/null; then
+            echo "Using docker-compose command..."
+            sudo docker-compose down || true
+            sudo docker-compose up -d
+        elif command -v docker &> /dev/null && docker compose version &> /dev/null; then
+            echo "Using docker compose command..."
+            sudo docker compose down || true
+            sudo docker compose up -d
         else
-          echo "Docker is not installed. Please install Docker to run containers."
+            echo "ERROR: Neither docker-compose nor docker compose is available!"
+            echo "Installing Docker Compose v2 plugin..."
+            DOCKER_CONFIG=${DOCKER_CONFIG:-$HOME/.docker}
+            mkdir -p $DOCKER_CONFIG/cli-plugins
+            COMPOSE_VERSION=v2.23.3
+            ARCH=$(uname -m)
+            sudo curl -SL "https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-linux-${ARCH}" -o /usr/local/bin/docker-compose
+            sudo chmod +x /usr/local/bin/docker-compose
+            sudo ln -sf /usr/local/bin/docker-compose /usr/bin/docker-compose
+            
+            echo "Trying again with docker-compose..."
+            sudo docker-compose down || true
+            sudo docker-compose up -d
         fi
+        
+        # Check container status
+        echo "Checking running containers..."
+        sudo docker ps
         
         echo "Deployment completed at $(date)"
         EOL
       - chmod +x scripts/deploy.sh
-      
-      # Create installation script
-      - |
-        cat > scripts/before_install.sh << 'EOL'
-        #!/bin/bash
-        echo "Installation started at $(date)"
-        
-        # Create application directory
-        mkdir -p /opt/security-ai/app
-        
-        # Install dependencies
-        yum update -y
-        amazon-linux-extras install -y docker
-        yum install -y python3 python3-pip
-        
-        # Start services
-        systemctl start docker
-        systemctl enable docker
-        
-        echo "Installation completed at $(date)"
-        EOL
-      - chmod +x scripts/before_install.sh
       
       # Create appspec.yml for CodeDeploy
       - |
@@ -97,11 +170,11 @@ phases:
         hooks:
           BeforeInstall:
             - location: scripts/before_install.sh
-              timeout: 300
+              timeout: 600
               runas: root
           ApplicationStart:
             - location: scripts/deploy.sh
-              timeout: 300
+              timeout: 600
               runas: root
         EOL
       
