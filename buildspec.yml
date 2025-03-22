@@ -117,7 +117,7 @@ phases:
         ssh-keygen -y -f /tmp/private_key.pem
         echo "--------------------------------------------------"
         echo "RUN THIS COMMAND ON YOUR EC2 INSTANCE:"
-        echo 'echo "PASTE_PUBLIC_KEY_HERE" >> ~/.ssh/authorized_keys'
+        echo 'echo "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDVEJCGFlCYokgd7ACvQEPDJho1oEg1CZI2nw85lSXmeuoBhhX9xgdEwuvuO796Q2nYZyX4KBChsTa20NXqoL3vJUFzat4RifqlalazPbVFznPV/yRFUBvFuUu/UQPHfux5d9qUt4uR4UqrQtdvm+CPHtSw3jdSDBCK3xLb/AARyJ06NJZ+Q++guvaWS+bIdxPIuLf0AQTCxOJvXLENFhrcgbAkh/tOZ3j9+0vQzIK5H7LqkpC95/t5O2WQN4b6yKmTJkW2+SFKDFthY3GY/zjBWOn6/ObK4PTlU/JLK2UAheoaDDGtO+veqRHJwhtzPukV7kE+5fO24mFzINcTPNdZ" >> ~/.ssh/authorized_keys'
         echo "<==================== IMPORTANT ====================>"
       
       # Create simplified test playbook
