@@ -19,15 +19,44 @@ phases:
     commands:
       - echo "Starting post-build phase"
       
-      # Get SSH key from S3
+      # Generate a temporary SSH key
       - |
-        echo "Getting SSH key from S3..."
-        BUCKET_NAME=$(aws cloudformation describe-stacks --stack-name security-ai-stack --query "Stacks[0].Outputs[?OutputKey=='SecretsBucketName'].OutputValue" --output text)
-        aws s3 cp s3://$BUCKET_NAME/ssh-keys/id_rsa /tmp/private_key.pem
+        echo "Generating temporary SSH key..."
+        ssh-keygen -t rsa -f /tmp/private_key.pem -N "" -q
         chmod 600 /tmp/private_key.pem
+        
+        echo "==================== IMPORTANT ====================>"
+        echo "ADD THIS PUBLIC KEY TO YOUR EC2 INSTANCE:"
+        echo "--------------------------------------------------"
+        ssh-keygen -y -f /tmp/private_key.pem
+        echo "--------------------------------------------------"
+        echo "RUN THIS COMMAND ON YOUR EC2 INSTANCE:"
+        echo 'echo "PASTE_PUBLIC_KEY_HERE" >> ~/.ssh/authorized_keys'
+        echo "<==================== IMPORTANT ====================>"
       
-      # Alternatively, if you know the bucket name directly:
-      # - aws s3 cp s3://security-ai-secrets-${SUFFIX}/ssh-keys/id_rsa /tmp/private_key.pem
+      # Create simplified test playbook
+      - |
+        cat > ansible/test.yml << 'EOL'
+        ---
+        - name: Test connectivity
+          hosts: cloudsecure_instances
+          gather_facts: no
+          tasks:
+            - name: Wait for connection
+              wait_for_connection:
+                timeout: 60
+                
+            - name: Ping test
+              ping:
+              
+            - name: Get hostname
+              command: hostname
+              register: hostname
+              
+            - name: Show hostname
+              debug:
+                msg: "Successfully connected to {{ hostname.stdout }}"
+        EOL
       
       # Create ansible config
       - |
@@ -52,16 +81,41 @@ phases:
         ansible_python_interpreter=/usr/bin/python3
         EOL
       
-      # Verify the key works
+      # Wait for key to be added
       - |
-        echo "Validating SSH key..."
-        ssh-keygen -y -f /tmp/private_key.pem || echo "Invalid key format"
-        ssh -i /tmp/private_key.pem -o StrictHostKeyChecking=no -o ConnectTimeout=5 ubuntu@$INSTANCE_IP "echo Connected to \$(hostname)" || echo "SSH connection failed"
+        echo "Waiting 5 minutes for you to add the public key to your EC2 instance..."
+        echo "Sleeping for 30 seconds at a time. Press Ctrl+C in AWS console to cancel build if needed."
+        
+        for i in {1..10}; do
+          echo "Waited $((i*30)) seconds out of 300..."
+          sleep 30
+          
+          # Try connecting every 30 seconds to see if key is added
+          if ssh -i /tmp/private_key.pem -o StrictHostKeyChecking=no -o ConnectTimeout=5 ubuntu@$INSTANCE_IP "echo Connected successfully" &>/dev/null; then
+            echo "✅ SSH connection successful! Continuing with Ansible..."
+            break
+          else
+            echo "❌ SSH connection failed. Please add the key to your EC2 instance."
+            if [ $i -eq 10 ]; then
+              echo "Timeout waiting for SSH connection. Exiting."
+              exit 1
+            fi
+          fi
+        done
       
-      # Run Ansible
+      # Run the test playbook
       - |
         cd ansible
-        ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook -i inventory.ini deploy.yml -v
+        echo "Running test playbook..."
+        ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook -i inventory.ini test.yml -v
+        
+        if [ $? -eq 0 ]; then
+          echo "✅ Test playbook succeeded! Running main playbook..."
+          ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook -i inventory.ini deploy.yml -v || echo "❌ Main playbook failed"
+        else
+          echo "❌ Test playbook failed. Exiting."
+          exit 1
+        fi
 
 artifacts:
   files:
