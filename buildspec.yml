@@ -34,79 +34,27 @@ phases:
         ssh_args = -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
         EOL
       
-      # Debug the SSH private key extensively
+      # Use base64 encoded key
       - |
-        echo "============ SSH KEY DEBUGGING ============"
-        echo "Writing private key to file..."
-        echo "$SSH_PRIVATE_KEY" > /tmp/private_key.pem
+        echo "Decoding SSH key from base64..."
+        echo "$SSH_PRIVATE_KEY_BASE64" | base64 -d > /tmp/private_key.pem
         chmod 600 /tmp/private_key.pem
         
         echo "Checking key file stats:"
         ls -la /tmp/private_key.pem
         
-        echo "Checking file size and line count:"
-        wc -l /tmp/private_key.pem
-        
-        echo "Checking if key begins with proper header:"
-        head -n 1 /tmp/private_key.pem
-        
-        echo "Checking if key ends with proper footer:"
-        tail -n 1 /tmp/private_key.pem
-        
-        echo "Checking if ssh-keygen can read the key:"
-        if ssh-keygen -y -f /tmp/private_key.pem 2>/dev/null; then
-          echo "Key is in valid format and can be read by ssh-keygen"
+        echo "Validating key format:"
+        if ssh-keygen -y -f /tmp/private_key.pem &>/dev/null; then
+          echo "✅ Key is valid"
+          echo "Public key: $(ssh-keygen -y -f /tmp/private_key.pem | head -n 1)"
         else
-          echo "ERROR: Key appears to be invalid or improperly formatted!"
-          echo "Common issues:"
-          echo "1. Missing proper BEGIN/END RSA PRIVATE KEY markers"
-          echo "2. Missing newlines in the key"
-          echo "3. Extra spaces/characters in the key"
-        fi
-        
-        echo "============ END SSH KEY DEBUGGING ============"
-      
-      # Create a test script for direct SSH
-      - |
-        echo "Creating test SSH script..."
-        cat > /tmp/test_ssh.sh << 'EOL'
-        #!/bin/bash
-        set -x
-        ssh -v -i /tmp/private_key.pem -o StrictHostKeyChecking=no ubuntu@$1 "echo SSH connection successful"
-        EOL
-        chmod +x /tmp/test_ssh.sh
-        
-        echo "Testing direct SSH connection with verbose output..."
-        /tmp/test_ssh.sh $INSTANCE_IP || echo "SSH connection failed"
-      
-      # Try with manually formatted key (if needed)
-      - |
-        if [ ! -s /tmp/private_key.pem ] || ! ssh-keygen -y -f /tmp/private_key.pem &>/dev/null; then
-          echo "Attempting to fix key format issues..."
-          # Extract key content and ensure proper format
-          cat > /tmp/fix_key.sh << 'EOL'
-          #!/bin/bash
-          # If key doesn't start with proper header, add it
-          if ! grep -q "BEGIN .* PRIVATE KEY" /tmp/private_key.pem; then
-            echo "-----BEGIN RSA PRIVATE KEY-----" > /tmp/fixed_key.pem
-            cat /tmp/private_key.pem >> /tmp/fixed_key.pem
-            echo "-----END RSA PRIVATE KEY-----" >> /tmp/fixed_key.pem
-            mv /tmp/fixed_key.pem /tmp/private_key.pem
-          fi
-          chmod 600 /tmp/private_key.pem
-          EOL
-          chmod +x /tmp/fix_key.sh
-          /tmp/fix_key.sh
-          
-          echo "Testing with fixed key:"
-          if ssh-keygen -y -f /tmp/private_key.pem 2>/dev/null; then
-            echo "Fixed key is valid"
-          else
-            echo "Could not fix key automatically"
-          fi
+          echo "❌ Key is invalid or incorrectly formatted"
+          echo "Key begins with: $(head -n 1 /tmp/private_key.pem)"
+          echo "Key ends with: $(tail -n 1 /tmp/private_key.pem)"
+          exit 1
         fi
       
-      # Create dynamic inventory with fixed key
+      # Create dynamic inventory with the decoded key
       - |
         cat > ansible/dynamic_inventory.ini << EOL
         [cloudsecure_instances]
@@ -117,12 +65,7 @@ phases:
         ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
         EOL
       
-      # Test SSH connection directly first
-      - |
-        echo "Testing direct SSH connection..."
-        ssh -i /tmp/private_key.pem -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ubuntu@$INSTANCE_IP "echo SSH connection successful" || echo "SSH connection failed"
-      
-      # Run Ansible with additional options
+      # Run Ansible with the properly formatted key
       - |
         cd ansible
         ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook -i dynamic_inventory.ini deploy.yml -v
