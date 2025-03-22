@@ -34,114 +34,48 @@ phases:
     commands:
       - echo "Starting post-build phase"
       
-      # Create a ROBUST installation script with better Amazon Linux detection
+      # Create a SIMPLIFIED installation script focusing just on Docker
       - |
         cat > scripts/before_install.sh << 'EOL'
         #!/bin/bash
-        set -e  # Exit on any error
-
+        
         echo "Installation started at $(date)"
         
         # Create application directory
         mkdir -p /opt/security-ai/app
         
-        # Determine Linux distribution and version
-        if [ -f /etc/os-release ]; then
-            . /etc/os-release
-            OS=$NAME
-            VERSION_ID=$VERSION_ID
-            echo "Detected OS: $OS $VERSION_ID"
-        else
-            OS=$(cat /etc/system-release | cut -d ' ' -f 1)
-            VERSION_ID=$(cat /etc/system-release | grep -oE '[0-9]+\.[0-9]+' | head -1)
-            echo "Detected OS from system-release: $OS $VERSION_ID"
-        fi
+        # Install Docker using official Docker install script (most reliable method)
+        echo "Installing Docker using official Docker script..."
+        curl -fsSL https://get.docker.com -o get-docker.sh
+        sudo sh ./get-docker.sh
         
-        # Different handling for Amazon Linux versions
-        if [[ "$OS" == *"Amazon Linux"* ]]; then
-            if [[ "$VERSION_ID" == "2" ]]; then
-                echo "Installing Docker for Amazon Linux 2..."
-                sudo yum update -y
-                sudo amazon-linux-extras install -y docker
-                
-                # Make sure docker service file exists
-                sudo yum install -y docker
-            elif [[ "$VERSION_ID" == "2023" ]]; then
-                echo "Installing Docker for Amazon Linux 2023..."
-                sudo dnf update -y
-                sudo dnf install -y docker
-            else
-                echo "Installing Docker for general Amazon Linux..."
-                sudo yum update -y
-                sudo yum install -y docker
-            fi
-            
-            # Install Docker Compose v2 plugin
-            echo "Installing Docker Compose..."
-            COMPOSE_VERSION=v2.23.3
-            ARCH=$(uname -m)
-            sudo curl -SL "https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-linux-${ARCH}" -o /usr/local/bin/docker-compose
-            sudo chmod +x /usr/local/bin/docker-compose
-            sudo ln -sf /usr/local/bin/docker-compose /usr/bin/docker-compose
-            
-        elif [[ "$OS" == *"Ubuntu"* ]] || [[ "$OS" == *"Debian"* ]]; then
-            echo "Installing Docker for Ubuntu/Debian..."
-            sudo apt-get update
-            sudo apt-get install -y apt-transport-https ca-certificates curl software-properties-common
-            curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
-            sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
-            sudo apt-get update
-            sudo apt-get install -y docker-ce docker-ce-cli containerd.io
-        else
-            echo "Trying generic Docker installation for $OS..."
-            if command -v yum &> /dev/null; then
-                sudo yum update -y
-                sudo yum install -y docker
-            elif command -v apt-get &> /dev/null; then
-                sudo apt-get update
-                sudo apt-get install -y docker.io
-            else
-                echo "Unsupported package manager - manual installation needed"
-                exit 1
-            fi
-        fi
+        # Verify Docker installation
+        echo "Docker version:"
+        sudo docker --version
         
-        # Try multiple service names for Docker
+        # Make sure Docker service is running
         echo "Starting Docker service..."
-        if systemctl list-unit-files | grep -q docker.service; then
-            echo "Found docker.service unit file"
-            sudo systemctl start docker
-            sudo systemctl enable docker
-        elif systemctl list-unit-files | grep -q docker.socket; then
-            echo "Found docker.socket unit file"
-            sudo systemctl start docker.socket
-            sudo systemctl enable docker.socket
-        else
-            echo "Docker service unit not found. Trying to install Docker using official script..."
-            # Try Docker's official installation script as a fallback
-            curl -fsSL https://get.docker.com -o get-docker.sh
-            sudo sh get-docker.sh
-            sudo systemctl start docker
-            sudo systemctl enable docker
-        fi
+        sudo systemctl start docker
+        sudo systemctl enable docker
+        sudo systemctl status docker
         
         # Add ec2-user to docker group
         sudo usermod -aG docker ec2-user
         
-        # Verify Docker installation
-        echo "Verifying Docker installation..."
-        sudo docker --version || echo "Docker command not found or errored"
+        # Installing Docker Compose directly
+        echo "Installing Docker Compose..."
+        sudo curl -L "https://github.com/docker/compose/releases/download/v2.23.3/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+        sudo chmod +x /usr/local/bin/docker-compose
+        sudo ln -sf /usr/local/bin/docker-compose /usr/bin/docker-compose
         
-        # Verify Docker Compose installation
-        echo "Verifying Docker Compose installation..."
-        sudo docker-compose --version || echo "docker-compose command not found or errored"
-        sudo docker compose version || echo "docker compose subcommand not found or errored"
+        echo "Docker Compose version:"
+        docker-compose --version || echo "Docker Compose installation failed"
         
         echo "Installation completed at $(date)"
         EOL
       - chmod +x scripts/before_install.sh
       
-      # Update deployment script to handle Docker service not found
+      # Simplify the deployment script - focus on just running the container
       - |
         cat > scripts/deploy.sh << 'EOL'
         #!/bin/bash
@@ -150,63 +84,30 @@ phases:
         
         # Application deployment logic
         cd /opt/security-ai/app
-        echo "Running application setup..."
+        echo "Current directory: $(pwd)"
+        ls -la
         
-        # Create HTML directory if it doesn't exist
-        mkdir -p html
-        
-        # Check if Docker is running without failing script
-        echo "Checking Docker status..."
-        if systemctl is-active docker &>/dev/null; then
-            echo "Docker service is active"
-        elif systemctl is-active docker.socket &>/dev/null; then
-            echo "Docker socket is active"
-        else
-            echo "Docker service not running. Trying to start it..."
-            sudo systemctl start docker || echo "Failed to start docker service"
-            
-            # If still not running, try the Docker installer again
-            if ! systemctl is-active docker &>/dev/null; then
-                echo "Installing Docker using official script..."
-                curl -fsSL https://get.docker.com -o get-docker.sh
-                sudo sh get-docker.sh
-                sudo systemctl start docker || echo "Failed to start docker service after installation"
-            fi
+        # Make sure Docker is installed, if not try again
+        if ! command -v docker &> /dev/null; then
+            echo "Docker not found, installing again..."
+            curl -fsSL https://get.docker.com -o get-docker.sh
+            sudo sh ./get-docker.sh
+            sudo systemctl start docker
+            sudo systemctl enable docker
         fi
         
-        # Check if Docker command works
-        if sudo docker ps &>/dev/null; then
-            echo "Docker command working"
-        else
-            echo "Docker command not working. Installation might be incomplete."
-            exit 1
-        fi
+        # Verify Docker is working
+        echo "Docker version:"
+        sudo docker --version
+        echo "Docker status:"
+        sudo systemctl status docker
         
-        # Try both Docker Compose commands
-        echo "Running Docker Compose..."
-        if command -v docker-compose &> /dev/null; then
-            echo "Using docker-compose command..."
-            sudo docker-compose down || true
-            sudo docker-compose up -d
-        elif command -v docker &> /dev/null && sudo docker compose version &> /dev/null; then
-            echo "Using docker compose command..."
-            sudo docker compose down || true
-            sudo docker compose up -d
-        else
-            echo "Installing Docker Compose..."
-            COMPOSE_VERSION=v2.23.3
-            ARCH=$(uname -m)
-            sudo curl -SL "https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-linux-${ARCH}" -o /usr/local/bin/docker-compose
-            sudo chmod +x /usr/local/bin/docker-compose
-            sudo ln -sf /usr/local/bin/docker-compose /usr/bin/docker-compose
-            
-            echo "Trying with docker-compose..."
-            sudo docker-compose down || true
-            sudo docker-compose up -d
-        fi
+        # Run Docker directly without compose if needed
+        echo "Starting NGINX container directly..."
+        sudo docker run -d -p 80:80 --name web -v $(pwd)/html:/usr/share/nginx/html nginx:latest
         
         # Check container status
-        echo "Checking running containers..."
+        echo "Running containers:"
         sudo docker ps
         
         echo "Deployment completed at $(date)"
