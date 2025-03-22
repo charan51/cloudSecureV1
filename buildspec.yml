@@ -6,18 +6,104 @@ phases:
       nodejs: 12
     commands:
       - echo "Starting installation"
-      - pip install ansible boto3 paramiko
-      - ansible-galaxy collection install community.docker
   
   build:
     commands:
       - echo "Starting build phase"
-      - mkdir -p app
+      - mkdir -p app scripts
       - echo "Hello World" > app/test.txt
   
   post_build:
     commands:
       - echo "Starting post-build phase"
+      
+      # Option 1: CodeDeploy Approach (recommended)
+      # Create deployment script
+      - |
+        cat > scripts/deploy.sh << 'EOL'
+        #!/bin/bash
+        echo "Deployment started at $(date)"
+        
+        # Application deployment logic
+        cd /opt/security-ai/app
+        echo "Running application setup..."
+        
+        # If using Docker
+        if command -v docker &> /dev/null; then
+          echo "Docker is installed, setting up containers..."
+          # docker compose up -d
+        fi
+        
+        echo "Deployment completed at $(date)"
+        EOL
+      - chmod +x scripts/deploy.sh
+      
+      # Create installation script
+      - |
+        cat > scripts/before_install.sh << 'EOL'
+        #!/bin/bash
+        echo "Installation started at $(date)"
+        
+        # Create application directory
+        mkdir -p /opt/security-ai/app
+        
+        # Install dependencies
+        yum update -y
+        amazon-linux-extras install -y docker
+        yum install -y python3 python3-pip
+        
+        # Start services
+        systemctl start docker
+        systemctl enable docker
+        
+        echo "Installation completed at $(date)"
+        EOL
+      - chmod +x scripts/before_install.sh
+      
+      # Create appspec.yml for CodeDeploy
+      - |
+        cat > appspec.yml << 'EOL'
+        version: 0.0
+        os: linux
+        files:
+          - source: /app
+            destination: /opt/security-ai/app
+          - source: /scripts
+            destination: /opt/security-ai/scripts
+        hooks:
+          BeforeInstall:
+            - location: scripts/before_install.sh
+              timeout: 300
+              runas: root
+          ApplicationStart:
+            - location: scripts/deploy.sh
+              timeout: 300
+              runas: root
+        EOL
+      
+      # Option 2: Ansible Approach (if you still want to try it)
+      # Create ansible config
+      - |
+        cat > ansible/ansible.cfg << 'EOL'
+        [defaults]
+        host_key_checking = False
+        timeout = 30
+        pipelining = True
+        
+        [ssh_connection]
+        retries = 3
+        ssh_args = -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+        EOL
+      
+      # Create Ansible inventory with CORRECT USERNAME
+      - |
+        cat > ansible/inventory.ini << EOL
+        [cloudsecure_instances]
+        $INSTANCE_IP ansible_user=ec2-user ansible_ssh_private_key_file=/tmp/private_key.pem
+        
+        [cloudsecure_instances:vars]
+        ansible_python_interpreter=/usr/bin/python3
+        EOL
       
       # Generate a temporary SSH key
       - |
@@ -58,29 +144,6 @@ phases:
                 msg: "Successfully connected to {{ hostname.stdout }}"
         EOL
       
-      # Create ansible config
-      - |
-        cat > ansible/ansible.cfg << 'EOL'
-        [defaults]
-        host_key_checking = False
-        timeout = 30
-        pipelining = True
-        
-        [ssh_connection]
-        retries = 3
-        ssh_args = -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
-        EOL
-      
-      # Create inventory
-      - |
-        cat > ansible/inventory.ini << EOL
-        [cloudsecure_instances]
-        $INSTANCE_IP ansible_user=ubuntu ansible_ssh_private_key_file=/tmp/private_key.pem
-        
-        [cloudsecure_instances:vars]
-        ansible_python_interpreter=/usr/bin/python3
-        EOL
-      
       # Wait for key to be added
       - |
         echo "Waiting 5 minutes for you to add the public key to your EC2 instance..."
@@ -91,7 +154,7 @@ phases:
           sleep 30
           
           # Try connecting every 30 seconds to see if key is added
-          if ssh -i /tmp/private_key.pem -o StrictHostKeyChecking=no -o ConnectTimeout=5 ubuntu@$INSTANCE_IP "echo Connected successfully" &>/dev/null; then
+          if ssh -i /tmp/private_key.pem -o StrictHostKeyChecking=no -o ConnectTimeout=5 ec2-user@$INSTANCE_IP "echo Connected successfully" &>/dev/null; then
             echo "✅ SSH connection successful! Continuing with Ansible..."
             break
           else
@@ -119,6 +182,8 @@ phases:
 
 artifacts:
   files:
-    - ansible/**/*
+    - appspec.yml
+    - scripts/**/*
     - app/**/*
+    - ansible/**/*
   discard-paths: no
