@@ -44,21 +44,17 @@ resource "aws_instance" "security_ai" {
   instance_type = "t2.micro"
   key_name      = "cloudsecure"
   
+  iam_instance_profile = aws_iam_instance_profile.security_ai.name
+  
   vpc_security_group_ids = [aws_security_group.security_ai.id]
   
   user_data = <<-EOF
               #!/bin/bash
               apt-get update -y
-              apt-get install -y docker.io ruby wget
+              apt-get install -y docker.io python3 python3-pip
               systemctl start docker
               systemctl enable docker
               mkdir -p /opt/security-ai/app
-              cd /tmp
-              wget https://aws-codedeploy-us-east-1.s3.amazonaws.com/latest/install
-              chmod +x install
-              ./install auto
-              systemctl start codedeploy-agent
-              systemctl enable codedeploy-agent
               EOF
 
   tags = {
@@ -238,6 +234,15 @@ resource "aws_iam_role_policy" "codebuild_policy" {
         ],
         Resource = "*",
         Effect = "Allow"
+      },
+      {
+        Action = [
+          "secretsmanager:GetSecretValue"
+        ],
+        Resource = [
+          "arn:aws:secretsmanager:*:*:secret:cloudsecure-ssh-key-*"
+        ],
+        Effect = "Allow"
       }
     ]
   })
@@ -322,16 +327,15 @@ resource "aws_codepipeline" "security_ai" {
     name = "Deploy"
     
     action {
-      name            = "Deploy"
-      category        = "Deploy"
-      owner           = "AWS"
-      provider        = "CodeDeploy"
-      version         = "1"
-      input_artifacts = ["build_output"]
+      name             = "AnsibleDeploy"
+      category         = "Build"
+      owner            = "AWS"
+      provider         = "CodeBuild"
+      version          = "1"
+      input_artifacts  = ["source_output"]
       
       configuration = {
-        ApplicationName     = aws_codedeploy_app.security_ai.name
-        DeploymentGroupName = aws_codedeploy_deployment_group.security_ai.deployment_group_name
+        ProjectName = aws_codebuild_project.security_ai.name
       }
     }
   }
@@ -343,31 +347,10 @@ resource "aws_codestarconnections_connection" "github" {
   provider_type = "GitHub"
 }
 
-# CodeDeploy app
-resource "aws_codedeploy_app" "security_ai" {
-  name = "security-ai-app-${random_id.suffix.hex}"
-}
+# IAM role for EC2 instance
+resource "aws_iam_role" "ec2_role" {
+  name = "security-ai-ec2-role-${random_id.suffix.hex}"
 
-# CodeDeploy deployment group
-resource "aws_codedeploy_deployment_group" "security_ai" {
-  app_name               = aws_codedeploy_app.security_ai.name
-  deployment_group_name  = "security-ai-deployment-group-${random_id.suffix.hex}"
-  service_role_arn       = aws_iam_role.codedeploy_role.arn
-  deployment_config_name = "CodeDeployDefault.OneAtATime" # Explicitly set for single instance
-  
-  ec2_tag_set {
-    ec2_tag_filter {
-      key   = "Name"
-      type  = "KEY_AND_VALUE"
-      value = "Security-AI-Instance"
-    }
-  }
-}
-
-# IAM role for CodeDeploy
-resource "aws_iam_role" "codedeploy_role" {
-  name = "security-ai-codedeploy-role-${random_id.suffix.hex}"
-  
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -375,17 +358,29 @@ resource "aws_iam_role" "codedeploy_role" {
         Action = "sts:AssumeRole"
         Effect = "Allow"
         Principal = {
-          Service = "codedeploy.amazonaws.com"
+          Service = "ec2.amazonaws.com"
         }
       }
     ]
   })
 }
 
-# Attach AWS managed policy for CodeDeploy
-resource "aws_iam_role_policy_attachment" "codedeploy_policy" {
-  role       = aws_iam_role.codedeploy_role.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSCodeDeployRole"
+# Attach AWS managed policy for CodeDeploy to EC2 role
+resource "aws_iam_role_policy_attachment" "ec2_codedeploy_policy" {
+  role       = aws_iam_role.ec2_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforAWSCodeDeploy"
+}
+
+# Attach S3 read policy for deployment artifacts
+resource "aws_iam_role_policy_attachment" "ec2_s3_policy" {
+  role       = aws_iam_role.ec2_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess"
+}
+
+# Create instance profile for EC2
+resource "aws_iam_instance_profile" "security_ai" {
+  name = "security-ai-instance-profile-${random_id.suffix.hex}"
+  role = aws_iam_role.ec2_role.name
 }
 
 output "instance_ip" {

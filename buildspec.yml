@@ -6,59 +6,56 @@ phases:
       nodejs: 12
     commands:
       - echo "Starting installation"
+      - pip install ansible boto3 paramiko  # Add paramiko for SSH connection support
   
   build:
     commands:
       - echo "Starting build phase"
-      - mkdir -p scripts
-      - echo "Hello World" > test.txt
+      - mkdir -p app
+      - echo "Hello World" > app/test.txt
+      # Build your application here as needed
   
   post_build:
     commands:
       - echo "Starting post-build phase"
-      # Create simplified deployment script
-      - |
-        cat > scripts/deploy.sh << 'EOL'
-        #!/bin/bash
-        echo "Deployment started"
-        echo "Deployment completed"
-        EOL
-      - chmod +x scripts/deploy.sh
       
-      # Create simplified installation script
+      # Create ansible.cfg for automation
       - |
-        cat > scripts/before_install.sh << 'EOL'
-        #!/bin/bash
-        echo "Installation started"
-        echo "Installation completed"
-        mkdir -p /opt/security-ai/app
+        cat > ansible/ansible.cfg << 'EOL'
+        [defaults]
+        host_key_checking = False
+        timeout = 30
+        pipelining = True
+        command_warnings = False
+        
+        [ssh_connection]
+        retries = 3
         EOL
-      - chmod +x scripts/before_install.sh
       
-      # Simplified appspec.yml
+      # Create dynamic inventory
+      - echo "[cloudsecure_instances]" > ansible/dynamic_inventory.ini
+      - echo "$INSTANCE_IP ansible_user=ubuntu ansible_ssh_private_key_file=/tmp/private_key.pem" >> ansible/dynamic_inventory.ini
+      - echo "[cloudsecure_instances:vars]" >> ansible/dynamic_inventory.ini
+      - echo "ansible_python_interpreter=/usr/bin/python3" >> ansible/dynamic_inventory.ini
+      
+      # Get SSH key and secure permissions
       - |
-        cat > appspec.yml << 'EOL'
-        version: 0.0
-        os: linux
-        files:
-          - source: /test.txt
-            destination: /opt/security-ai
-          - source: /scripts
-            destination: /opt/security-ai/scripts
-        hooks:
-          BeforeInstall:
-            - location: scripts/before_install.sh
-              timeout: 300
-              runas: root
-          ApplicationStart:
-            - location: scripts/deploy.sh
-              timeout: 300
-              runas: root
-        EOL
+        aws secretsmanager get-secret-value --secret-id cloudsecure-ssh-key --query SecretString --output text > /tmp/private_key.pem
+        chmod 600 /tmp/private_key.pem
+        trap "rm -f /tmp/private_key.pem" EXIT
+      
+      # Run Ansible with proper error handling
+      - |
+        cd ansible
+        if ansible-playbook -i dynamic_inventory.ini deploy.yml -v; then
+          echo "Ansible deployment successful"
+        else
+          echo "Ansible deployment failed"
+          exit 1
+        fi
 
 artifacts:
   files:
-    - appspec.yml
-    - scripts/**/*
-    - test.txt
+    - ansible/**/*
+    - app/**/*
   discard-paths: no
