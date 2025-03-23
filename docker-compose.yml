@@ -2,9 +2,7 @@ version: '3.8'
 
 services:
   client:
-    build:
-      context: ./app/client
-      dockerfile: Dockerfile
+    image: cloudsecure-client:latest
     container_name: cloudsecure-client
     environment:
       - REACT_APP_API_URL=http://localhost:3000
@@ -18,9 +16,7 @@ services:
       - app-network
 
   server:
-    build:
-      context: ./app/server
-      dockerfile: Dockerfile
+    image: cloudsecure-server:latest
     container_name: cloudsecure-server
     ports:
       - "3000:3000"
@@ -88,4 +84,3 @@ networks:
 volumes:
   db_data:
   mongo_data:
-
