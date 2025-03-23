@@ -1,6 +1,0 @@
----
-- name: Test connection
-  hosts: cloudsecure_instances
-  tasks:
-    - name: Run hostname command
-      command: hostname 
