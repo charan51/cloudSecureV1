@@ -1,7 +1,7 @@
 ---
 - name: Deploy cloudsecure app on EC2
   hosts: ec2_instance
-  become: yes
+  become: true
   tasks:
     - name: Update package cache
       yum:
@@ -17,7 +17,7 @@
       service:
         name: docker
         state: started
-        enabled: yes
+        enabled: true
 
     - name: Install Docker Compose
       get_url:

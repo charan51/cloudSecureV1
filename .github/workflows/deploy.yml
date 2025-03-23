@@ -6,9 +6,20 @@ on:
       - main
 
 jobs:
-  build-and-push:
+  build:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Build client image
+        run: docker build -t cloudsecure-client:latest ./app/client
+
+      - name: Build server image
+        run: docker build -t cloudsecure-server:latest ./app/server
       - name: Checkout code
         uses: actions/checkout@v3
 
