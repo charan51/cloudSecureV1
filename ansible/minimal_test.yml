@@ -1,0 +1,15 @@
+---
+- name: Minimal Test for SSH Connection
+  hosts: cloudsecure_instances
+  gather_facts: no
+  
+  tasks:
+    - name: Test SSH Connection with Raw Module
+      raw: "echo 'Connection successful' && mkdir -p /tmp/ansible-test && echo 'Directory created'"
+      register: raw_result
+      ignore_errors: yes
+      
+    - name: Show Raw Result
+      debug:
+        var: raw_result
+      when: raw_result is defined
