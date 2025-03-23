@@ -1,0 +1,84 @@
+name: CloudSecure CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+          # Adding a specific role assumption is recommended for security
+          # role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          # role-duration-seconds: 1200
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.0
+
+      - name: Terraform Init
+        run: |
+          cd terraform
+          terraform init
+
+      - name: Terraform Plan
+        id: terraform-plan
+        run: |
+          cd terraform
+          terraform plan -out=tfplan
+
+      - name: Terraform Apply
+        if: github.event_name != 'pull_request'
+        run: |
+          cd terraform
+          terraform apply -auto-approve tfplan
+          echo "EC2_PUBLIC_IP=$(terraform output -raw ec2_public_ip)" >> $GITHUB_ENV
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install Ansible
+        run: |
+          python -m pip install --upgrade pip
+          pip install ansible
+
+      - name: Wait for EC2 instance to be ready
+        if: github.event_name != 'pull_request'
+        run: |
+          echo "Waiting for EC2 instance to initialize..."
+          sleep 60  # Give the instance time to fully boot and configure SSH
+
+      - name: Set up SSH key for Ansible
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ env.EC2_PUBLIC_IP }} >> ~/.ssh/known_hosts
+
+      - name: Update inventory file
+        run: |
+          echo "[cloudsecure_instances]" > ansible/hosts.ini
+          echo "${{ env.EC2_PUBLIC_IP }} ansible_user=ec2-user ansible_ssh_private_key_file=~/.ssh/id_rsa" >> ansible/hosts.ini
+          echo "" >> ansible/hosts.ini
+          echo "[cloudsecure_instances:vars]" >> ansible/hosts.ini
+          echo "ansible_python_interpreter=/usr/bin/python3" >> ansible/hosts.ini
+
+      - name: Deploy with Ansible
+        run: |
+          ansible-playbook -i ansible/hosts.ini ansible/deploy.yml 

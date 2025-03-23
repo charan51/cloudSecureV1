@@ -1,0 +1,4 @@
+aws_region     = "us-east-1"
+ec2_ami        = "ami-0c55b159cbfafe1f0"  # Update this with the latest Amazon Linux 2 AMI for your region
+instance_type  = "t2.micro"
+ssh_public_key = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQDQRtBmxhXag1lkNnD5MbZSL5Yh8HAQ3kX9OGre/1QvFuTX9WiVLEPdvsSGs80E8fHH3Gtz6/DmAwN3DeYoRhouJ0X1S4uRdV0q2BWo86pMC7itlvbv3GmULvyZMMFI9ubNQvI5mNOl3WUNF1StL3VGZRhaYNbpjAXi6bUtwog2Jp5gizBUjWLLo/AyG8IzvzQfy94t6gGTJarI0+ZXkjOxBZkhWOT9E9Al1AtR5X1edZrlHKEawhj/beK6W6kZGr90mZM23W0vJjRRBaRy0oBwmrE06ntutuPSKnxSI60nuRYA48WRjhqWhOTv+rkyCGXsucQEcdzd5cpDWaPduxXHf/OU6xtdmAOvXYGLMzNgQ4aAtbt/G9V7ZmovBznSlk+A96P1um9f3tLtTS/7HY6L/UcXAplE26Y/R/+iEWkBLVDw6TAyEo5lwwiDwYI+nOOHY/BFI4OXvTtugix3V12d6RXJvmqP4nY3/qB0s5dzHjaKlGiGUBrFLLNg0R8XFC7R9k8VuRmpccSXpAyLEi/VyJEoBk+835eZMWucZCxDvw4g60HoK2wol+1AOnpqJ502baF49aiyHBxGyHpNtycVNbH/9LWAXxqPSxhb1LwXJUeuq0k6z3g5gM5uNfQs0BH9sZ+PbdDppRr8fYBlTIPkABM0drkPZx0z7jlJUHAzQw== your_email@example.com"   # Your SSH public key 
