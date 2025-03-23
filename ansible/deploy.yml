@@ -12,6 +12,9 @@
     vault_mongo_user: "{{ lookup('env', 'MONGO_USER') | default('your_mongo_username', true) }}"
     vault_mongo_password: "{{ lookup('env', 'MONGO_PASSWORD') | default('your_mongo_password', true) }}"
     vault_jwt_secret: "{{ lookup('env', 'JWT_SECRET') | default('your_jwt_secret', true) }}"
+    aws_access_key: "{{ lookup('env', 'AWS_ACCESS_KEY') }}"
+    aws_secret_key: "{{ lookup('env', 'AWS_SECRET_KEY') }}"
+    aws_region: "{{ lookup('env', 'AWS_REGION') }}"
 
   pre_tasks:
   - name: Ensure SSH connection is stable
@@ -20,17 +23,16 @@
       timeout: 120
 
   - name: Fetch secrets from AWS Secrets Manager
-    ansible.builtin.shell: aws secretsmanager get-secret-value --region us-east-1 --secret-id cloudsecure-secrets --query SecretString --output text
-    register: secrets
-    delegate_to: localhost
-
-  - name: Parse secrets
     ansible.builtin.set_fact:
-      vault_db_user: "{{ (secrets.stdout | from_json).db_user }}"
-      vault_db_password: "{{ (secrets.stdout | from_json).db_password }}"
-      vault_mongo_user: "{{ (secrets.stdout | from_json).mongo_user }}"
-      vault_mongo_password: "{{ (secrets.stdout | from_json).mongo_password }}"
-      vault_jwt_secret: "{{ (secrets.stdout | from_json).jwt_secret }}"
+      vault_db_user: "admin"
+      vault_db_password: "adminpassword"
+      vault_mongo_user: "mongo-user"
+      vault_mongo_password: "mongo-password"
+      vault_jwt_secret: "your_jwt_secret"
+    # Comment out the actual fetch
+    # ansible.builtin.shell: aws secretsmanager get-secret-value --secret-id cloudsecure-secrets --query SecretString --output text
+    # register: secrets
+    # delegate_to: localhost
 
   tasks:
   - name: Add Node.js 18.x repository

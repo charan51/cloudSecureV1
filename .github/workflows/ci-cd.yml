@@ -90,7 +90,11 @@ jobs:
           echo "[defaults]" > ansible.cfg
           echo "host_key_checking = False" >> ansible.cfg
           
-          # Run the deployment playbook
-          ANSIBLE_CONFIG=ansible.cfg ansible-playbook -i inventory.ini ansible/deploy.yml
+          # Run the deployment playbook with extra vars
+          ANSIBLE_CONFIG=ansible.cfg ansible-playbook -i inventory.ini \
+            -e "aws_access_key=${{ secrets.AWS_ACCESS_KEY_ID }}" \
+            -e "aws_secret_key=${{ secrets.AWS_SECRET_ACCESS_KEY }}" \
+            -e "aws_region=us-east-1" \
+            ansible/deploy.yml
         env:
           AWS_DEFAULT_REGION: us-east-1
