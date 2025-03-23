@@ -53,7 +53,10 @@
       state: started
       enabled: yes
     register: docker_service
-    failed_when: docker_service.state != 'started'
+
+  - name: Display Docker service status
+    debug:
+      msg: "Docker service status: {{ docker_service.status }}"
 
   - name: Add current user to docker group
     user:
@@ -71,8 +74,8 @@
       path: "{{ app_dir }}"
       state: directory
       mode: '0755'
-      owner: "{{ ansible_user }}"
-      group: "{{ ansible_user }}"
+      owner: ec2-user
+      group: ec2-user
 
   - name: Copy application files (excluding node_modules)
     ansible.posix.synchronize:
@@ -88,8 +91,8 @@
     until: copy_result is succeeded
 
   - name: Copy docker-compose file
-    copy:
-      src: ../docker-compose.yml
+    template:
+      src: docker-compose.yml.j2
       dest: "{{ app_dir }}/docker-compose.yml"
       mode: '0644'
 
@@ -142,15 +145,14 @@
       mode: '0755'
       force: yes
 
-  - name: Run Docker Compose
+  - name: Deploy application with Docker Compose
     community.docker.docker_compose_v2:
       project_src: "{{ app_dir }}"
-      pull: always
-      build: always
       state: present
-      recreate: auto
+      pull: yes
+      recreate: always
     environment:
-      COMPOSE_HTTP_TIMEOUT: "200"
+      COMPOSE_HTTP_TIMEOUT: 200
 
   - name: Check if containers are running
     command: docker compose ps
@@ -202,3 +204,45 @@
     notify: Run logrotate
   - name: Run logrotate
     command: logrotate /etc/logrotate.d/docker-container-logs
+
+  - name: Add ec2-user to docker group
+    user:
+      name: ec2-user
+      groups: docker
+      append: yes
+
+  - name: Ensure application directories exist
+    file:
+      path: "{{ app_dir }}/{{ item }}"
+      state: directory
+      mode: '0755'
+      owner: ec2-user
+      group: ec2-user
+    with_items:
+      - app
+      - app/client
+      - app/server
+      - backups
+
+  - name: Configure automatic security updates
+    yum:
+      name: yum-cron
+      state: present
+
+  - name: Configure yum-cron for security updates
+    copy:
+      content: |
+        [commands]
+        update_cmd = security
+        update_messages = yes
+        download_updates = yes
+        apply_updates = yes
+        random_sleep = 360
+      dest: /etc/yum/yum-cron.conf
+      mode: '0644'
+
+  - name: Enable yum-cron service
+    service:
+      name: yum-cron
+      state: started
+      enabled: yes

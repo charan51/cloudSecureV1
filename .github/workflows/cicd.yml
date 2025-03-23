@@ -219,4 +219,21 @@ jobs:
           ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ec2-user@$PUBLIC_IP "cat /etc/os-release; uname -a"
           
           echo "Checking available package managers..."
-          ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ec2-user@$PUBLIC_IP "which yum dnf apt 2>/dev/null || echo 'No common package managers found'" 
+          ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ec2-user@$PUBLIC_IP "which yum dnf apt 2>/dev/null || echo 'No common package managers found'"
+
+      - name: Verify deployment
+        if: github.event_name != 'pull_request'
+        run: |
+          PUBLIC_IP=$(cat public_ip.txt)
+          echo "Verifying deployment at $PUBLIC_IP..."
+          
+          # Wait for services to start
+          sleep 30
+          
+          # Check that Docker containers are running
+          ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ec2-user@$PUBLIC_IP "sudo docker ps"
+          
+          # Test web application (adjust port as needed)
+          curl -I http://$PUBLIC_IP:80 || echo "Web application not responding on port 80"
+          
+          echo "Deployment verification complete" 
