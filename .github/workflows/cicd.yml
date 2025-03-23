@@ -46,45 +46,17 @@ jobs:
         run: |
           cd terraform
           terraform apply -auto-approve tfplan
-          # Save outputs to files instead
+          # Directly extract the outputs and save them to files
           terraform output -raw ec2_instance_id > ../instance_id.txt
           terraform output -raw ec2_public_ip > ../public_ip.txt
 
-      - name: Use Terraform Outputs
+      - name: Display EC2 Information
         if: github.event_name != 'pull_request'
         run: |
-          export EC2_INSTANCE_ID=$(cat instance_id.txt)
-          export EC2_PUBLIC_IP=$(cat public_ip.txt)
-          echo "EC2 Instance ID: $EC2_INSTANCE_ID"
-          echo "EC2 Public IP: $EC2_PUBLIC_IP"
-          
-          # Create Ansible inventory
-          mkdir -p ansible
-          echo "[cloudsecure_instances]" > ansible/hosts.ini
-          echo "$EC2_PUBLIC_IP ansible_user=ec2-user ansible_ssh_private_key_file=~/.ssh/id_rsa" >> ansible/hosts.ini
-          echo "" >> ansible/hosts.ini
-          echo "[cloudsecure_instances:vars]" >> ansible/hosts.ini
-          echo "ansible_python_interpreter=/usr/bin/python3" >> ansible/hosts.ini
-          
-          # Setup SSH
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan -H $EC2_PUBLIC_IP >> ~/.ssh/known_hosts
-          
-          # Wait for SSH
-          echo "Waiting for SSH to be available..."
-          for i in {1..10}; do
-            if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -i ~/.ssh/id_rsa ec2-user@$EC2_PUBLIC_IP "echo SSH connection successful"; then
-              echo "SSH connection established!"
-              break
-            fi
-            echo "Attempt $i failed. Waiting 30 seconds..."
-            sleep 30
-          done
-          
-          # Deploy with Ansible
-          ansible-playbook -i ansible/hosts.ini ansible/deploy.yml -v
+          INSTANCE_ID=$(cat instance_id.txt)
+          PUBLIC_IP=$(cat public_ip.txt)
+          echo "EC2 Instance ID: $INSTANCE_ID"
+          echo "EC2 Public IP: $PUBLIC_IP"
 
       - name: Set up Python
         if: github.event_name != 'pull_request'
@@ -98,33 +70,71 @@ jobs:
           python -m pip install --upgrade pip
           pip install ansible
 
-      - name: Display EC2 Information
+      - name: Create Ansible inventory
         if: github.event_name != 'pull_request'
         run: |
-          echo "EC2 Instance ID: ${{ steps.terraform_output.outputs.instance_id }}"
-          echo "EC2 Public IP: ${{ steps.terraform_output.outputs.public_ip }}"
+          # Read public IP from file
+          PUBLIC_IP=$(cat public_ip.txt)
+          echo "Using EC2 Public IP: $PUBLIC_IP"
+          
+          # Create inventory file
+          mkdir -p ansible
+          echo "[cloudsecure_instances]" > ansible/hosts.ini
+          echo "$PUBLIC_IP ansible_user=ec2-user ansible_ssh_private_key_file=~/.ssh/id_rsa" >> ansible/hosts.ini
+          echo "" >> ansible/hosts.ini
+          echo "[cloudsecure_instances:vars]" >> ansible/hosts.ini
+          echo "ansible_python_interpreter=/usr/bin/python3" >> ansible/hosts.ini
+          
+          # Display inventory file
+          echo "Created Ansible inventory:"
+          cat ansible/hosts.ini
 
-      - name: Set up SSH key for Ansible
+      - name: Set up SSH key
         if: github.event_name != 'pull_request'
         run: |
+          # Create SSH directory and set up private key
           mkdir -p ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan -H ${{ steps.terraform_output.outputs.public_ip }} >> ~/.ssh/known_hosts
+          
+          # Read public IP and add to known hosts
+          PUBLIC_IP=$(cat public_ip.txt)
+          echo "Adding $PUBLIC_IP to known hosts"
+          
+          # Use the IP address explicitly with ssh-keyscan
+          if [ -n "$PUBLIC_IP" ]; then
+            ssh-keyscan -H "$PUBLIC_IP" >> ~/.ssh/known_hosts
+            echo "Added $PUBLIC_IP to known hosts"
+          else
+            echo "Error: Public IP is empty"
+            exit 1
+          fi
 
-      - name: Wait for EC2 instance to be ready
+      - name: Test SSH connection
         if: github.event_name != 'pull_request'
         run: |
-          echo "Waiting for SSH to be available..."
-          for i in {1..10}; do
-            if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -i ~/.ssh/id_rsa ec2-user@${{ steps.terraform_output.outputs.public_ip }} "echo SSH connection successful"; then
-              echo "SSH connection established!"
-              break
+          PUBLIC_IP=$(cat public_ip.txt)
+          echo "Testing SSH connection to $PUBLIC_IP"
+          
+          # Disable strict host key checking temporarily for the test
+          for i in {1..12}; do
+            if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 -i ~/.ssh/id_rsa ec2-user@$PUBLIC_IP exit 2>/dev/null; then
+              echo "SSH connection successful!"
+              exit 0
             fi
-            echo "Attempt $i failed. Waiting 30 seconds..."
-            sleep 30
-            if [ $i -eq 10 ]; then
-              echo "Failed to establish SSH connection after 10 attempts"
+            
+            echo "Attempt $i failed. Waiting 20 seconds..."
+            sleep 20
+            
+            if [ $i -eq 12 ]; then
+              echo "Failed to establish SSH connection after 12 attempts"
               exit 1
             fi
-          done 
+          done
+
+      - name: Deploy with Ansible
+        if: github.event_name != 'pull_request'
+        run: |
+          PUBLIC_IP=$(cat public_ip.txt)
+          echo "Deploying to $PUBLIC_IP"
+          ansible-playbook -i ansible/hosts.ini ansible/deploy.yml -v 
