@@ -72,57 +72,50 @@ jobs:
       - name: Terraform Init
         run: cd terraform && terraform init
       
+      - name: Create Unique Terraform Variables
+        run: |
+          cd terraform
+          # Generate a unique identifier using timestamp
+          TIMESTAMP=$(date +%Y%m%d%H%M%S)
+          # Create a unique name for the security group
+          echo "security_group_name = \"cloudsecure-sg-$TIMESTAMP\"" > terraform.tfvars
+          cat terraform.tfvars
+      
       - name: Terraform Apply
         run: |
           cd terraform
+          terraform apply -auto-approve
           
-          # First try with regular apply
-          if terraform apply -auto-approve; then
-            echo "Terraform apply succeeded"
-          else
-            echo "Terraform apply failed, checking for specific errors..."
+          # If terraform apply fails, try with default security group
+          if [ $? -ne 0 ]; then
+            echo "Terraform apply failed, trying alternative approach with default security group"
             
-            # Check for security group duplicate error
-            if terraform apply -auto-approve 2>&1 | grep -q "InvalidGroup.Duplicate"; then
-              echo "Found duplicate security group error, applying alternative approach"
+            # Try to use the default security group
+            SG_ID=$(aws ec2 describe-security-groups --query "SecurityGroups[?GroupName=='default'].GroupId" --output text)
+            
+            if [ -n "$SG_ID" ]; then
+              echo "Using default security group: $SG_ID"
+              # Create a new main.tf with hardcoded security group
+              echo "provider \"aws\" { region = var.aws_region }" > main.tf.new
+              echo "data \"aws_vpc\" \"default\" { default = true }" >> main.tf.new
+              echo "data \"aws_subnets\" \"default\" { filter { name = \"vpc-id\" values = [data.aws_vpc.default.id] } }" >> main.tf.new
+              echo "data \"aws_subnet\" \"default\" { id = data.aws_subnets.default.ids[0] }" >> main.tf.new
+              echo "resource \"aws_instance\" \"cloudsecure_server\" {" >> main.tf.new
+              echo "  ami = var.aws_ami_id" >> main.tf.new
+              echo "  instance_type = var.aws_instance_type" >> main.tf.new
+              echo "  key_name = var.aws_key_name" >> main.tf.new
+              echo "  subnet_id = data.aws_subnet.default.id" >> main.tf.new
+              echo "  vpc_security_group_ids = [\"$SG_ID\"]" >> main.tf.new
+              echo "  associate_public_ip_address = true" >> main.tf.new
+              echo "  tags = { Name = \"cloudsecure-server\" }" >> main.tf.new
+              echo "  root_block_device { volume_size = 20 volume_type = \"gp2\" delete_on_termination = true }" >> main.tf.new
+              echo "}" >> main.tf.new
               
-              # Try to find and use an existing security group instead
-              SG_ID=$(aws ec2 describe-security-groups --filters "Name=vpc-id,Values=$(aws ec2 describe-vpcs --filters "Name=isDefault,Values=true" --query "Vpcs[0].VpcId" --output text)" "Name=group-name,Values=default" --query "SecurityGroups[0].GroupId" --output text)
-              
-              if [ -n "$SG_ID" ]; then
-                echo "Using existing default security group: $SG_ID"
-                # Create a temporary variables override file
-                cat > override.tf << EOF
-                resource "aws_security_group" "cloudsecure_sg" {
-                  count = 0
-                }
-                
-                locals {
-                  security_group_id = "$SG_ID"
-                }
-                
-                resource "aws_instance" "cloudsecure_server" {
-                  vpc_security_group_ids = [local.security_group_id]
-                }
-                EOF
-                
-                # Try apply again with the override
-                terraform apply -auto-approve
-              else
-                echo "Could not find default security group, attempting with a random name"
-                # Create a temporary variables override file with a random name
-                RANDOM_SUFFIX=$(cat /dev/urandom | tr -dc 'a-z0-9' | fold -w 8 | head -n 1)
-                cat > override.tf << EOF
-                resource "aws_security_group" "cloudsecure_sg" {
-                  name = "cloudsecure-sg-$RANDOM_SUFFIX"
-                }
-                EOF
-                
-                # Try apply again with the override
-                terraform apply -auto-approve
-              fi
+              # Replace main.tf and apply again
+              mv main.tf.new main.tf
+              terraform apply -auto-approve
             else
-              echo "Terraform apply failed for reasons other than duplicate security group"
+              echo "Could not find default security group, exiting"
               exit 1
             fi
           fi

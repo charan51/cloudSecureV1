@@ -21,3 +21,9 @@ variable "aws_key_name" {
   type        = string
   default     = "cloudsecure-key"  # Make sure this key exists in your AWS account
 }
+
+variable "security_group_name" {
+  description = "Name of the security group"
+  type        = string
+  default     = "cloudsecure-sg"
+}
