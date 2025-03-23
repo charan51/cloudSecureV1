@@ -187,14 +187,16 @@ jobs:
           fi
           
           # Create a customized hosts file with proper SSH user
-          cat > ansible/hosts.ini << EOF
-[cloudsecure_servers]
-$IP_ADDRESS ansible_user=ec2-user
+          cat > ansible/hosts.ini << 'EOFMARKER'
+          [cloudsecure_servers]
+          IPADDRESSPLACEHOLDER ansible_user=ec2-user
 
-[all:vars]
-ansible_ssh_private_key_file=~/.ssh/cloudsecure.pem
-ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
-EOF
+          [all:vars]
+          ansible_ssh_private_key_file=~/.ssh/cloudsecure.pem
+          ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+          EOFMARKER
+          # Replace placeholder with actual IP
+          sed -i "s/IPADDRESSPLACEHOLDER/$IP_ADDRESS/g" ansible/hosts.ini
           
           # Show the hosts file
           echo "Created Ansible hosts file:"
