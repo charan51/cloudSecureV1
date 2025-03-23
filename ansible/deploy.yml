@@ -2,7 +2,7 @@
 - name: Deploy CloudSecure Application
   hosts: cloudsecure_instances
   become: yes  # Use sudo for privileged tasks where needed
-  gather_facts: yes
+  gather_facts: no  # Temporarily disable to test pre-tasks
 
   vars:
     app_dir: /opt/cloudsecure
@@ -20,6 +20,26 @@
         delay: 5
         timeout: 120
       tags: always
+
+    - name: Check /tmp permissions and writability
+      ansible.builtin.shell: |
+        ls -ld /tmp && whoami && df -h /tmp && mkdir -p /tmp/ansible-test && touch /tmp/ansible-test/testfile && rm -rf /tmp/ansible-test
+      register: tmp_check
+      become: no  # Run as ec2-user
+      tags: debug
+
+    - name: Debug /tmp check
+      ansible.builtin.debug:
+        msg: "Tmp check output: {{ tmp_check.stdout_lines }}"
+      tags: debug
+
+    - name: Fix /tmp permissions if necessary
+      ansible.builtin.file:
+        path: /tmp
+        state: directory
+        mode: '1777'  # Ensure world-writable with sticky bit
+      when: "'drwxrwxrwt' not in tmp_check.stdout"
+      tags: debug
 
     - name: Determine OS release
       ansible.builtin.command: cat /etc/os-release
@@ -145,7 +165,7 @@
         mode: '0644'
         owner: ec2-user
         group: ec2-user
-      become: no  # Run as ec2-user to avoid sudo-related tmp issues
+      become: no  # Run as ec2-user
       tags: deploy
 
     - name: Run Docker Compose
