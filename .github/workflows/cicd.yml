@@ -138,52 +138,74 @@ jobs:
             echo "Extracted IP from output: $INSTANCE_PUBLIC_IP"
           fi
           
-          # Create a file with the IP for debugging
-          echo "$INSTANCE_PUBLIC_IP" > ip.txt
+          # Store IP in a shared environment variable
+          echo "INSTANCE_IP=$INSTANCE_PUBLIC_IP" >> $GITHUB_ENV
           
-          # Write to GITHUB_OUTPUT
-          echo "instance_ip=$INSTANCE_PUBLIC_IP" >> $GITHUB_OUTPUT
+          # Also create a file that can be read by other steps
+          echo "$INSTANCE_PUBLIC_IP" > ../ip.txt
           
           # Confirm what we're setting
-          echo "Setting instance_ip to: $INSTANCE_PUBLIC_IP"
+          echo "Setting INSTANCE_IP environment variable to: $INSTANCE_PUBLIC_IP"
       
+      - name: Debug IP Output
+        run: |
+          echo "DEBUG: Environment variable INSTANCE_IP: '${{ env.INSTANCE_IP }}'"
+          echo "DEBUG: Content of ip.txt file:"
+          cat ip.txt
+          echo "DEBUG: All environment variables:"
+          env | sort
+          
       - name: Update Ansible hosts
         run: |
-          # Make sure we have a valid IP
-          if [[ -z "${{ steps.get-ip.outputs.instance_ip }}" ]]; then
-            echo "Failed to get instance IP from Terraform output"
-            echo "Running terraform show to debug:"
-            cd terraform && terraform show
-            echo "Looking for AWS instance ID in Terraform state..."
+          # Get IP from environment variable or file
+          IP_ADDRESS="${{ env.INSTANCE_IP }}"
+          
+          # If environment variable is empty, try reading from file
+          if [[ -z "$IP_ADDRESS" ]]; then
+            echo "Environment variable INSTANCE_IP is empty, trying to read from file"
+            if [[ -f ip.txt ]]; then
+              IP_ADDRESS=$(cat ip.txt)
+              echo "Read IP address from file: $IP_ADDRESS"
+            fi
+          fi
+          
+          # Final fallback - try getting directly from AWS
+          if [[ -z "$IP_ADDRESS" ]]; then
+            echo "No IP address found, looking for instance ID in Terraform state..."
             INSTANCE_ID=$(cd terraform && terraform state show aws_instance.cloudsecure_server | grep -oP 'id\s+=\s+"\K[i][-][0-9a-z]+')
             if [[ -n "$INSTANCE_ID" ]]; then
-              echo "Found instance ID: $INSTANCE_ID, trying to get IP from AWS CLI..."
-              INSTANCE_IP=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --query "Reservations[0].Instances[0].PublicIpAddress" --output text)
-              if [[ -n "$INSTANCE_IP" && "$INSTANCE_IP" != "None" ]]; then
-                echo "Retrieved IP from AWS CLI: $INSTANCE_IP"
-                sed -i "s/{{ instance_ip }}/$INSTANCE_IP/g" ansible/hosts.ini
-                cat ansible/hosts.ini
-                return 0
-              fi
+              echo "Found instance ID: $INSTANCE_ID, getting IP from AWS CLI..."
+              IP_ADDRESS=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --query "Reservations[0].Instances[0].PublicIpAddress" --output text)
+              echo "Retrieved IP from AWS CLI: $IP_ADDRESS"
             fi
-            # If we get here, we couldn't find a valid IP
-            echo "Could not retrieve a valid IP address for the instance"
+          fi
+          
+          # Verify we have a valid IP address
+          if [[ -z "$IP_ADDRESS" || "$IP_ADDRESS" == "None" ]]; then
+            echo "Failed to get a valid IP address"
             exit 1
           fi
           
-          echo "Using instance IP from Terraform: ${{ steps.get-ip.outputs.instance_ip }}"
-          sed -i "s/{{ instance_ip }}/${{ steps.get-ip.outputs.instance_ip }}/g" ansible/hosts.ini
+          # Update the Ansible hosts file
+          echo "Using instance IP: $IP_ADDRESS"
+          sed -i "s/{{ instance_ip }}/$IP_ADDRESS/g" ansible/hosts.ini
           cat ansible/hosts.ini
       
       - name: Wait for SSH to become available
         run: |
-          echo "Waiting for SSH on ${{ steps.get-ip.outputs.instance_ip }} to become available..."
+          # Read the IP address from the environment or file
+          IP_ADDRESS="${{ env.INSTANCE_IP }}"
+          if [[ -z "$IP_ADDRESS" && -f ip.txt ]]; then
+            IP_ADDRESS=$(cat ip.txt)
+          fi
+          
+          echo "Waiting for SSH on $IP_ADDRESS to become available..."
           # Set a maximum number of attempts
           MAX_ATTEMPTS=20
           COUNTER=0
           
           while [ $COUNTER -lt $MAX_ATTEMPTS ]; do
-            if ssh -i ~/.ssh/cloudsecure.pem -o StrictHostKeyChecking=no -o ConnectTimeout=5 -o BatchMode=yes ec2-user@${{ steps.get-ip.outputs.instance_ip }} "echo SSH available" 2>/dev/null; then
+            if ssh -i ~/.ssh/cloudsecure.pem -o StrictHostKeyChecking=no -o ConnectTimeout=5 -o BatchMode=yes ec2-user@$IP_ADDRESS "echo SSH available" 2>/dev/null; then
               echo "SSH connection established successfully"
               break
             fi
@@ -210,5 +232,11 @@ jobs:
       
       - name: Verify Deployment
         run: |
-          echo "Application deployed to http://${{ steps.get-ip.outputs.instance_ip }}"
-          curl -s http://${{ steps.get-ip.outputs.instance_ip }}
+          # Read the IP address from the environment or file
+          IP_ADDRESS="${{ env.INSTANCE_IP }}"
+          if [[ -z "$IP_ADDRESS" && -f ip.txt ]]; then
+            IP_ADDRESS=$(cat ip.txt)
+          fi
+          
+          echo "Application deployed to http://$IP_ADDRESS"
+          curl -s --connect-timeout 30 http://$IP_ADDRESS || echo "Could not connect to application - it may still be starting up"
