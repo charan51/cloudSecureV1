@@ -21,9 +21,6 @@ jobs:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
-          # Adding a specific role assumption is recommended for security
-          # role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
-          # role-duration-seconds: 1200
 
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v2
@@ -43,7 +40,6 @@ jobs:
       - name: Terraform Apply Using Shell Script
         if: github.event_name != 'pull_request'
         run: |
-          # Create a shell script to handle Terraform output
           cat > apply_terraform.sh << 'EOF'
           #!/bin/bash
           set -e
@@ -51,49 +47,37 @@ jobs:
           cd terraform
           terraform apply -auto-approve tfplan
 
-          # Write outputs to files
           terraform output -json > tf_output.json
 
-          # Extract values using grep and sed (no extra dependencies)
           INSTANCE_ID=$(grep -o '"ec2_instance_id": {[^}]*"value": "[^"]*"' tf_output.json | sed 's/.*"value": "\([^"]*\)".*/\1/')
           PUBLIC_IP=$(grep -o '"ec2_public_ip": {[^}]*"value": "[^"]*"' tf_output.json | sed 's/.*"value": "\([^"]*\)".*/\1/')
 
           echo "Instance ID: $INSTANCE_ID"
           echo "Public IP: $PUBLIC_IP"
 
-          # Validate IP address format
           if [[ -z "$PUBLIC_IP" || ! "$PUBLIC_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "No valid public IP found in Terraform output. Trying AWS CLI..."
-            
-            # Wait for the instance to be fully created and get a public IP
             for i in {1..5}; do
               echo "Attempt $i to get public IP from AWS CLI..."
               PUBLIC_IP=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --query 'Reservations[].Instances[].PublicIpAddress' --output text)
-              
               if [[ -n "$PUBLIC_IP" && "$PUBLIC_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
                 echo "Valid public IP found from AWS CLI: $PUBLIC_IP"
                 break
               fi
-              
               if [ $i -eq 5 ]; then
                 echo "Failed to get a valid public IP after 5 attempts"
                 exit 1
               fi
-              
               echo "Waiting 20 seconds for IP assignment..."
               sleep 20
             done
           fi
 
-          # Write the values to files in the parent directory
           echo "$INSTANCE_ID" > ../instance_id.txt
           echo "$PUBLIC_IP" > ../public_ip.txt
           EOF
 
-          # Make the script executable
           chmod +x apply_terraform.sh
-
-          # Run the script
           ./apply_terraform.sh
 
       - name: Display Infrastructure Info
@@ -140,7 +124,6 @@ jobs:
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
           
-          # Disable strict host key checking
           echo "Host *" > ~/.ssh/config
           echo "  StrictHostKeyChecking no" >> ~/.ssh/config
           echo "  UserKnownHostsFile=/dev/null" >> ~/.ssh/config
@@ -152,7 +135,6 @@ jobs:
           PUBLIC_IP=$(cat public_ip.txt)
           echo "Testing SSH connection to $PUBLIC_IP"
           
-          # Create a script to test SSH connection
           cat > test_ssh.sh << 'EOF'
           #!/bin/bash
           
@@ -166,19 +148,14 @@ jobs:
               echo "SSH connection successful!"
               exit 0
             fi
-            
             echo "Attempt $i failed. Waiting $INTERVAL seconds..."
             sleep $INTERVAL
-            
             if [ $i -eq $ATTEMPTS ]; then
               echo "Failed to establish SSH connection after $ATTEMPTS attempts."
-              
-              # Check security group rules
               INSTANCE_ID=$(cat instance_id.txt)
               echo "Security group configuration:"
               aws ec2 describe-instances --instance-ids $INSTANCE_ID --query 'Reservations[].Instances[].SecurityGroups[].GroupId' --output text | 
               xargs -I {} aws ec2 describe-security-groups --group-ids {} --query 'SecurityGroups[].IpPermissions[]'
-              
               exit 1
             fi
           done
@@ -193,31 +170,28 @@ jobs:
           cat > ansible.cfg << EOF
           [defaults]
           host_key_checking = False
-          remote_tmp = /tmp/.ansible-${USER}/tmp
+          remote_tmp = /tmp/ansible-ec2-user/tmp  # Updated to ensure writable path
           gathering = explicit
           
           [ssh_connection]
           pipelining = True
           ssh_args = -o ControlMaster=auto -o ControlPersist=60s -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
           EOF
+          chmod 644 ansible.cfg
 
       - name: Deploy with Ansible
         if: github.event_name != 'pull_request'
         run: |
           PUBLIC_IP=$(cat public_ip.txt)
           echo "Deploying to $PUBLIC_IP with Ansible"
-          
-          # Use verbose mode to show more details about the error
-          ANSIBLE_CONFIG=ansible.cfg ansible-playbook -i ansible/hosts.ini ansible/deploy.yml -vv
+          ANSIBLE_CONFIG=ansible.cfg ansible-playbook -i ansible/hosts.ini ansible/deploy.yml -vvv  # Increased verbosity
 
       - name: Check EC2 OS details
         if: github.event_name != 'pull_request'
         run: |
           PUBLIC_IP=$(cat public_ip.txt)
           echo "Checking OS details for $PUBLIC_IP..."
-          
           ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ec2-user@$PUBLIC_IP "cat /etc/os-release; uname -a"
-          
           echo "Checking available package managers..."
           ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ec2-user@$PUBLIC_IP "which yum dnf apt 2>/dev/null || echo 'No common package managers found'"
 
@@ -226,12 +200,6 @@ jobs:
         run: |
           PUBLIC_IP=$(cat public_ip.txt)
           echo "Verifying deployment at $PUBLIC_IP..."
-          
-          # Wait for services to start
           sleep 30
-          
-          # Check that Docker containers are running
           ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ec2-user@$PUBLIC_IP "cd /opt/cloudsecure && docker-compose ps"
-          
-          # Display the public endpoint
-          echo "Application deployed to: http://$PUBLIC_IP" 
+          echo "Application deployed to: http://$PUBLIC_IP"
