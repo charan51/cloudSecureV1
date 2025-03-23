@@ -125,35 +125,53 @@ jobs:
         run: |
           cd terraform
           
-          # Get the raw output without using jq
-          INSTANCE_IP=$(terraform output instance_public_ip)
+          # Directly extract the IP address from terraform state
+          INSTANCE_PUBLIC_IP=$(terraform state show aws_instance.cloudsecure_server | grep -oP 'public_ip\s+=\s+"\K[0-9.]+')
+          echo "Extracted IP directly from state: $INSTANCE_PUBLIC_IP"
           
-          # Clean up the output (remove quotes if present)
-          INSTANCE_IP=$(echo "$INSTANCE_IP" | tr -d '"')
-          
-          echo "Raw IP output: $INSTANCE_IP"
-          
-          # Validate IP format
-          if [[ ! $INSTANCE_IP =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Warning: IP address doesn't match expected format"
-            echo "Falling back to terraform show for debugging"
-            terraform show
+          # Fallback if state extraction fails
+          if [ -z "$INSTANCE_PUBLIC_IP" ]; then
+            echo "Failed to extract IP from state, trying alternative method"
+            INSTANCE_OUTPUT=$(terraform output -no-color)
+            echo "Raw terraform output: $INSTANCE_OUTPUT"
+            INSTANCE_PUBLIC_IP=$(echo "$INSTANCE_OUTPUT" | grep "instance_public_ip" | cut -d "=" -f2 | xargs)
+            echo "Extracted IP from output: $INSTANCE_PUBLIC_IP"
           fi
           
-          # Write to output even if format is unexpected
-          echo "instance_ip=${INSTANCE_IP}" >> $GITHUB_OUTPUT
+          # Create a file with the IP for debugging
+          echo "$INSTANCE_PUBLIC_IP" > ip.txt
+          
+          # Write to GITHUB_OUTPUT
+          echo "instance_ip=$INSTANCE_PUBLIC_IP" >> $GITHUB_OUTPUT
+          
+          # Confirm what we're setting
+          echo "Setting instance_ip to: $INSTANCE_PUBLIC_IP"
       
       - name: Update Ansible hosts
         run: |
           # Make sure we have a valid IP
           if [[ -z "${{ steps.get-ip.outputs.instance_ip }}" ]]; then
             echo "Failed to get instance IP from Terraform output"
-            echo "Running terraform output to debug:"
-            cd terraform && terraform output
+            echo "Running terraform show to debug:"
+            cd terraform && terraform show
+            echo "Looking for AWS instance ID in Terraform state..."
+            INSTANCE_ID=$(cd terraform && terraform state show aws_instance.cloudsecure_server | grep -oP 'id\s+=\s+"\K[i][-][0-9a-z]+')
+            if [[ -n "$INSTANCE_ID" ]]; then
+              echo "Found instance ID: $INSTANCE_ID, trying to get IP from AWS CLI..."
+              INSTANCE_IP=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --query "Reservations[0].Instances[0].PublicIpAddress" --output text)
+              if [[ -n "$INSTANCE_IP" && "$INSTANCE_IP" != "None" ]]; then
+                echo "Retrieved IP from AWS CLI: $INSTANCE_IP"
+                sed -i "s/{{ instance_ip }}/$INSTANCE_IP/g" ansible/hosts.ini
+                cat ansible/hosts.ini
+                return 0
+              fi
+            fi
+            # If we get here, we couldn't find a valid IP
+            echo "Could not retrieve a valid IP address for the instance"
             exit 1
           fi
           
-          echo "Using instance IP: ${{ steps.get-ip.outputs.instance_ip }}"
+          echo "Using instance IP from Terraform: ${{ steps.get-ip.outputs.instance_ip }}"
           sed -i "s/{{ instance_ip }}/${{ steps.get-ip.outputs.instance_ip }}/g" ansible/hosts.ini
           cat ansible/hosts.ini
       
