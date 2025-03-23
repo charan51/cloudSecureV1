@@ -5,7 +5,7 @@ variable "aws_region" {
 
 variable "ec2_ami" {
   description = "Amazon Linux 2 AMI ID"
-  default     = "ami-0c55b159cbfafe1f0" # Amazon Linux 2 AMI (HVM), SSD Volume Type
+  default     = "ami-0e8a34246278c21e4" # Amazon Linux 2023 AMI
 }
 
 variable "instance_type" {

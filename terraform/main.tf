@@ -81,13 +81,29 @@ resource "aws_security_group" "cloudsecure_sg" {
   }
 }
 
+# Find the latest Amazon Linux 2 AMI
+data "aws_ami" "amazon_linux_2" {
+  most_recent = true
+  owners      = ["amazon"]
+
+  filter {
+    name   = "name"
+    values = ["amzn2-ami-hvm-*-x86_64-gp2"]
+  }
+
+  filter {
+    name   = "virtualization-type"
+    values = ["hvm"]
+  }
+}
+
 resource "aws_key_pair" "cloudsecure_key" {
   key_name   = "cloudsecure-key"
   public_key = var.ssh_public_key
 }
 
 resource "aws_instance" "cloudsecure_instance" {
-  ami                    = var.ec2_ami
+  ami                    = data.aws_ami.amazon_linux_2.id
   instance_type          = var.instance_type
   key_name               = aws_key_pair.cloudsecure_key.key_name
   subnet_id              = aws_subnet.cloudsecure_subnet.id
