@@ -6,7 +6,7 @@ phases:
       nodejs: 12
     commands:
       - echo "Starting installation phase"
-      - npm install -g npm@latest
+      - npm install -g npm@8.19.3
       - npm --version
       - node --version
   
