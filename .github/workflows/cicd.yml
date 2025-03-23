@@ -46,11 +46,13 @@ jobs:
         run: |
           cd terraform
           terraform apply -auto-approve tfplan
-          # Export the terraform outputs to separate environment variables
-          echo "EC2_INSTANCE_ID=$(terraform output -raw ec2_instance_id)" >> $GITHUB_ENV
-          echo "EC2_PUBLIC_IP=$(terraform output -raw ec2_public_ip)" >> $GITHUB_ENV
+          # Use a more reliable way to capture outputs
+          INSTANCE_ID=$(terraform output -raw ec2_instance_id || echo "")
+          PUBLIC_IP=$(terraform output -raw ec2_public_ip || echo "")
+          echo "EC2_INSTANCE_ID=${INSTANCE_ID}" >> $GITHUB_ENV
+          echo "EC2_PUBLIC_IP=${PUBLIC_IP}" >> $GITHUB_ENV
 
-      - name: Verify Terraform Outputs
+      - name: Display EC2 Information
         run: |
           echo "EC2 Instance ID: ${{ env.EC2_INSTANCE_ID }}"
           echo "EC2 Public IP: ${{ env.EC2_PUBLIC_IP }}"
@@ -89,8 +91,9 @@ jobs:
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -H ${{ env.EC2_PUBLIC_IP }} >> ~/.ssh/known_hosts
 
-      - name: Update Ansible inventory
+      - name: Update Ansible inventory file
         run: |
+          mkdir -p ansible
           echo "[cloudsecure_instances]" > ansible/hosts.ini
           echo "${{ env.EC2_PUBLIC_IP }} ansible_user=ec2-user ansible_ssh_private_key_file=~/.ssh/id_rsa" >> ansible/hosts.ini
           echo "" >> ansible/hosts.ini
@@ -98,6 +101,30 @@ jobs:
           echo "ansible_python_interpreter=/usr/bin/python3" >> ansible/hosts.ini
           cat ansible/hosts.ini
 
+      - name: Setup SSH for Ansible
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ env.EC2_PUBLIC_IP }} >> ~/.ssh/known_hosts
+
+      - name: Wait for EC2 instance to initialize
+        run: |
+          # Wait for SSH to be available
+          echo "Waiting for SSH to become available on ${{ env.EC2_PUBLIC_IP }}..."
+          for i in {1..12}; do
+            if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -i ~/.ssh/id_rsa ec2-user@${{ env.EC2_PUBLIC_IP }} echo "SSH is available"; then
+              echo "SSH connection successful!"
+              break
+            fi
+            if [ $i -eq 12 ]; then
+              echo "Timed out waiting for SSH to become available"
+              exit 1
+            fi
+            echo "Attempt $i failed, waiting 10 seconds..."
+            sleep 10
+          done
+
       - name: Deploy with Ansible
         run: |
-          ansible-playbook -i ansible/hosts.ini ansible/deploy.yml -v 
+          ansible-playbook -i ansible/hosts.ini ansible/deploy.yml 
