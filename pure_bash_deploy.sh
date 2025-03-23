@@ -5,7 +5,7 @@
 # Verify arguments
 if [ $# -lt 1 ]; then
     echo "Usage: $0 <server-ip> [username] [key-file]"
-    echo "Example: $0 3.218.67.48 ec2-user ~/.ssh/my-key.pem"
+    echo "Example: $0 18.232.55.42 ec2-user ~/.ssh/my-key.pem"
     exit 1
 fi
 
