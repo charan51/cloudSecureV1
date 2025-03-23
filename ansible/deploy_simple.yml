@@ -1,0 +1,59 @@
+---
+- name: Simple Deploy CloudSecure Application
+  hosts: cloudsecure_instances
+  become: yes
+  gather_facts: no
+  
+  vars:
+    app_dir: /opt/cloudsecure
+    ansible_tmp_dir: "/tmp/.ansible-tmp"
+  
+  tasks:
+    - name: Ensure tmp directory exists
+      raw: mkdir -p {{ ansible_tmp_dir }} && chmod 0777 {{ ansible_tmp_dir }}
+    
+    - name: Get Python version
+      raw: python3 --version
+      register: python_version
+    
+    - name: Show Python version
+      debug:
+        var: python_version.stdout_lines
+    
+    - name: Check OS details
+      raw: cat /etc/os-release
+      register: os_release
+    
+    - name: Debug OS info
+      debug:
+        var: os_release.stdout_lines
+    
+    - name: Fix permissions
+      raw: chmod 1777 /tmp
+    
+    - name: Install basic packages
+      raw: yum update -y && yum install -y curl git docker python3 python3-pip nodejs
+    
+    - name: Start and enable Docker
+      raw: systemctl start docker && systemctl enable docker
+    
+    - name: Create app directory
+      raw: |
+        mkdir -p {{ app_dir }} && 
+        chmod 0755 {{ app_dir }} && 
+        chown ec2-user:ec2-user {{ app_dir }}
+    
+    - name: Create simple test file
+      raw: |
+        cat > {{ app_dir }}/test.txt << 'EOF'
+        CloudSecure deployment test
+        EOF
+        chown ec2-user:ec2-user {{ app_dir }}/test.txt
+    
+    - name: Verify deployment
+      raw: cat {{ app_dir }}/test.txt
+      register: test_output
+    
+    - name: Show test results
+      debug:
+        var: test_output.stdout_lines
