@@ -20,7 +20,7 @@
       timeout: 120
 
   - name: Fetch secrets from AWS Secrets Manager
-    ansible.builtin.shell: aws secretsmanager get-secret-value --secret-id cloudsecure-secrets --query SecretString --output text
+    ansible.builtin.shell: aws secretsmanager get-secret-value --region us-east-1 --secret-id cloudsecure-secrets --query SecretString --output text
     register: secrets
     delegate_to: localhost
 
