@@ -187,13 +187,28 @@ jobs:
           chmod +x test_ssh.sh
           ./test_ssh.sh "$PUBLIC_IP"
 
+      - name: Create Ansible configuration
+        if: github.event_name != 'pull_request'
+        run: |
+          cat > ansible.cfg << EOF
+          [defaults]
+          host_key_checking = False
+          remote_tmp = /tmp/.ansible-${USER}/tmp
+          gathering = explicit
+          
+          [ssh_connection]
+          pipelining = True
+          ssh_args = -o ControlMaster=auto -o ControlPersist=60s -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+          EOF
+
       - name: Deploy with Ansible
         if: github.event_name != 'pull_request'
         run: |
           PUBLIC_IP=$(cat public_ip.txt)
           echo "Deploying to $PUBLIC_IP with Ansible"
           
-          ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook -i ansible/hosts.ini ansible/deploy.yml -v
+          # Use verbose mode to show more details about the error
+          ANSIBLE_CONFIG=ansible.cfg ansible-playbook -i ansible/hosts.ini ansible/deploy.yml -vv
 
       - name: Check EC2 OS details
         if: github.event_name != 'pull_request'

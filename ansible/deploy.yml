@@ -2,6 +2,7 @@
 - name: Deploy CloudSecure Application
   hosts: cloudsecure_instances
   become: yes
+  gather_facts: yes
 
   vars:
     app_dir: /opt/cloudsecure
@@ -19,27 +20,25 @@
       delay: 5
       timeout: 120
       
-  - name: Gather facts
-    setup:
-    
   - name: Determine OS release
     command: cat /etc/os-release
     register: os_release
     changed_when: false
 
   tasks:
+  - name: Debug - Show OS information
+    debug:
+      msg: "OS Info: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+      
   - name: Add Node.js 18.x repository
     shell: curl -fsSL https://rpm.nodesource.com/setup_18.x | bash -
 
-  - name: Install required packages
-    package:
-      name:
-      - docker
-      - git
-      - python3
-      - python3-pip
-      - nodejs
-      state: present
+  - name: Install required packages using shell
+    shell: |
+      yum install -y docker git python3 python3-pip nodejs
+    args:
+      executable: /bin/bash
+    when: "'yum' in os_release.stdout"
 
   - name: Install Docker Compose (legacy binary)
     get_url:
