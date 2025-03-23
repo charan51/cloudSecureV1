@@ -452,12 +452,5 @@ resource "aws_iam_role_policy" "codebuild_s3_secrets_policy" {
   })
 }
 
-output "instance_ip" {
-  value = aws_instance.security_ai.public_ip
-}
-
-output "codepipeline_url" {
-  value = "https://console.aws.amazon.com/codesuite/codepipeline/pipelines/${aws_codepipeline.security_ai.name}/view?region=${data.aws_region.current.name}"
-}
 
 data "aws_region" "current" {}
