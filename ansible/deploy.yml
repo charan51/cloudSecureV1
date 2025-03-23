@@ -18,13 +18,21 @@
     wait_for_connection:
       delay: 5
       timeout: 120
+      
+  - name: Gather facts
+    setup:
+    
+  - name: Determine OS release
+    command: cat /etc/os-release
+    register: os_release
+    changed_when: false
 
   tasks:
   - name: Add Node.js 18.x repository
     shell: curl -fsSL https://rpm.nodesource.com/setup_18.x | bash -
 
   - name: Install required packages
-    yum:
+    package:
       name:
       - docker
       - git
@@ -171,13 +179,6 @@
     yum:
       name: cronie
       state: present
-
-  - name: Setup backup cron job
-    cron:
-      name: "Backup databases"
-      minute: "0"
-      hour: "0"
-      job: "cd {{ app_dir }} && docker compose exec -T db-service mysqldump -u {{ vault_db_user }} -p{{ vault_db_password }} security_ai > {{ app_dir }}/backups/mysql_backup_$(date +\\%Y\\%m\\%d).sql && docker compose exec -T mongo-service mongodump --uri='mongodb://{{ vault_mongo_user }}:{{ vault_mongo_password }}@mongo-service:27017/cloudsecure?authSource=admin' --archive > {{ app_dir }}/backups/mongo_backup_$(date +\\%Y\\%m\\%d).archive"
 
   - name: Setup backup cron job
     cron:

@@ -193,4 +193,15 @@ jobs:
           PUBLIC_IP=$(cat public_ip.txt)
           echo "Deploying to $PUBLIC_IP with Ansible"
           
-          ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook -i ansible/hosts.ini ansible/deploy.yml -v 
+          ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook -i ansible/hosts.ini ansible/deploy.yml -v
+
+      - name: Check EC2 OS details
+        if: github.event_name != 'pull_request'
+        run: |
+          PUBLIC_IP=$(cat public_ip.txt)
+          echo "Checking OS details for $PUBLIC_IP..."
+          
+          ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ec2-user@$PUBLIC_IP "cat /etc/os-release; uname -a"
+          
+          echo "Checking available package managers..."
+          ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ec2-user@$PUBLIC_IP "which yum dnf apt 2>/dev/null || echo 'No common package managers found'" 
