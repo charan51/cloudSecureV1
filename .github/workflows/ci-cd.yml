@@ -101,7 +101,7 @@ jobs:
       # Step 11: Download SSH key from S3
       - name: Download SSH key from S3
         run: |
-          aws s3 cp s3://security-ai-secrets/cloudsecure.pem /tmp/cloudsecure.pem
+          aws s3 cp s3://security-ai-secrets-f29c5bf14f688e52/cloudsecure.pem /tmp/cloudsecure.pem
           chmod 400 /tmp/cloudsecure.pem
 
       # Step 12: Run Ansible playbook

@@ -169,7 +169,7 @@ resource "aws_iam_openid_connect_provider" "github" {
   ]
 
   thumbprint_list = [
-    "74f3a68f16524f15424927704c9506f55a9316bd" # Thumbprint for GitHub OIDC
+    "74f3a68f16524f15424927704c9506f55a9316bd" # Updated thumbprint for GitHub OIDC
   ]
 }
 
@@ -211,21 +211,38 @@ resource "aws_iam_role_policy" "github_actions_policy" {
     Statement = [
       {
         Action = [
+          "s3:CreateBucket",
           "s3:GetObject",
-          "s3:ListBucket"
+          "s3:ListBucket",
+          "s3:PutBucketPublicAccessBlock",
+          "s3:PutObject",
+          "s3:DeleteBucket"
         ]
         Resource = [
-          aws_s3_bucket.secrets_bucket.arn,
-          "${aws_s3_bucket.secrets_bucket.arn}/*"
+          "arn:aws:s3:::security-ai-secrets-${random_id.suffix.hex}",
+          "arn:aws:s3:::security-ai-secrets-${random_id.suffix.hex}/*"
         ]
         Effect = "Allow"
       },
       {
         Action = [
           "ec2:*",
+          "iam:CreateRole",
+          "iam:CreateOpenIDConnectProvider",
           "iam:PassRole",
           "iam:GetRole",
-          "iam:ListRoles"
+          "iam:ListRoles",
+          "iam:DeleteRole",
+          "iam:AttachRolePolicy",
+          "iam:DetachRolePolicy",
+          "iam:CreatePolicy",
+          "iam:DeletePolicy",
+          "iam:CreateInstanceProfile",
+          "iam:AddRoleToInstanceProfile",
+          "iam:RemoveRoleFromInstanceProfile",
+          "iam:DeleteInstanceProfile",
+          "iam:TagRole",
+          "iam:TagOpenIDConnectProvider"
         ]
         Resource = "*"
         Effect   = "Allow"
