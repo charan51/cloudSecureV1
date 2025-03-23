@@ -27,14 +27,13 @@ jobs:
       - name: Save server image as tar
         run: docker save -o cloudsecure-server.tar cloudsecure-server:latest
 
-      - name: Upload images as artifacts with retry
-        uses: nick-fields/retry@v2
+      - name: Upload images as artifacts
+        uses: actions/upload-artifact@v3
         with:
-          timeout_minutes: 5
-          max_attempts: 3
-          command: |
-            echo "Uploading artifacts..."
-            actions/upload-artifact@v3 --name docker-images --path "cloudsecure-client.tar\ncloudsecure-server.tar"
+          name: docker-images
+          path: |
+            cloudsecure-client.tar
+            cloudsecure-server.tar
 
   deploy:
     runs-on: ubuntu-latest
@@ -43,14 +42,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Download Docker image artifacts with retry
-        uses: nick-fields/retry@v2
+      - name: Download Docker image artifacts
+        uses: actions/download-artifact@v3
         with:
-          timeout_minutes: 5
-          max_attempts: 3
-          command: |
-            echo "Downloading artifacts..."
-            actions/download-artifact@v3 --name docker-images --path .
+          name: docker-images
+          path: .
 
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v2
