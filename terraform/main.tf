@@ -171,17 +171,17 @@ resource "aws_instance" "security_ai" {
 }
 
 # OIDC Identity Provider for GitHub Actions (commented out since it already exists)
-# resource "aws_iam_openid_connect_provider" "github" {
-#   url = "https://token.actions.githubusercontent.com"
-#
-#   client_id_list = [
-#     "sts.amazonaws.com"
-#   ]
-#
-#   thumbprint_list = [
-#     "74f3a68f16524f15424927704c9506f55a9316bd"
-#   ]
-# }
+resource "aws_iam_openid_connect_provider" "github" {
+  url = "https://token.actions.githubusercontent.com"
+
+  client_id_list = [
+    "sts.amazonaws.com"
+  ]
+
+  thumbprint_list = [
+    "74f3a68f16524f15424927704c9506f55a9316bd"
+  ]
+}
 
 # IAM Role for GitHub Actions to assume
 resource "aws_iam_role" "github_actions_role" {
