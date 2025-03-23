@@ -40,12 +40,13 @@ resource "aws_security_group" "cloudsecure_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  # Allow SSH
+  # Allow SSH - ensure GitHub Actions runners can connect
   ingress {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
+    description = "Allow SSH from anywhere for deployment"
   }
 
   # Allow server port
@@ -68,8 +69,34 @@ resource "aws_security_group" "cloudsecure_sg" {
   }
 }
 
-# Create EC2 instance in the default VPC
+# Find existing instances with the cloudsecure-server tag
+data "aws_instances" "existing_cloudsecure" {
+  filter {
+    name   = "tag:Name"
+    values = ["cloudsecure-server"]
+  }
+  
+  filter {
+    name   = "instance-state-name"
+    values = ["running", "pending", "stopped"]
+  }
+}
+
+locals {
+  # Determine if we should create a new instance or use existing
+  use_existing = length(data.aws_instances.existing_cloudsecure.ids) > 0
+  instance_id = local.use_existing ? data.aws_instances.existing_cloudsecure.ids[0] : aws_instance.cloudsecure_server[0].id
+}
+
+# Get details about the existing instance if one is found
+data "aws_instance" "existing_instance" {
+  count       = local.use_existing ? 1 : 0
+  instance_id = local.use_existing ? data.aws_instances.existing_cloudsecure.ids[0] : ""
+}
+
+# Create EC2 instance in the default VPC only if no existing instance
 resource "aws_instance" "cloudsecure_server" {
+  count                       = local.use_existing ? 0 : 1
   ami                         = var.aws_ami_id
   instance_type               = var.aws_instance_type
   key_name                    = var.aws_key_name
@@ -89,22 +116,51 @@ resource "aws_instance" "cloudsecure_server" {
 
   user_data = <<-EOF
               #!/bin/bash
+              exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
+              echo "Starting user data script"
+              
               # Update system
+              echo "Updating system packages"
               yum update -y
-              yum install -y docker git
-
-              # Configure SSH for faster availability
-              sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
-              sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
+              yum install -y docker git openssh-server
+              
+              # Create SSH key for ec2-user if it doesn't exist
+              if [ ! -f /home/ec2-user/.ssh/authorized_keys ]; then
+                echo "Creating SSH directory for ec2-user"
+                mkdir -p /home/ec2-user/.ssh
+                chmod 700 /home/ec2-user/.ssh
+                touch /home/ec2-user/.ssh/authorized_keys
+                chmod 600 /home/ec2-user/.ssh/authorized_keys
+                chown -R ec2-user:ec2-user /home/ec2-user/.ssh
+              fi
+              
+              # Configure SSH for easier access
+              echo "Configuring SSH"
+              echo "PasswordAuthentication yes" >> /etc/ssh/sshd_config
+              echo "PermitRootLogin yes" >> /etc/ssh/sshd_config
+              echo "PubkeyAuthentication yes" >> /etc/ssh/sshd_config
+              echo "AuthorizedKeysFile .ssh/authorized_keys" >> /etc/ssh/sshd_config
+              
+              # Ensure SSH is enabled and running
+              echo "Ensuring SSH is running"
+              systemctl enable sshd
+              systemctl start sshd
               systemctl restart sshd
-
+              
+              # Set a password for ec2-user and root for direct login
+              echo "Setting passwords"
+              echo "ec2-user:Password123!" | chpasswd
+              echo "root:Password123!" | chpasswd
+              
               # Configure Docker
+              echo "Configuring Docker"
               systemctl start docker
               systemctl enable docker
               curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
               chmod +x /usr/local/bin/docker-compose
               
               # Signal that the instance is ready
+              echo "User data script completed successfully"
               touch /tmp/instance-ready
               EOF
 }
