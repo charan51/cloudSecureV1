@@ -79,11 +79,22 @@ jobs:
         id: get-ip
         run: |
           cd terraform
-          echo "instance_ip=$(terraform output -raw instance_public_ip)" >> $GITHUB_OUTPUT
+          INSTANCE_IP=$(terraform output -json instance_public_ip | jq -r '.')
+          echo "instance_ip=${INSTANCE_IP}" >> $GITHUB_OUTPUT
       
       - name: Update Ansible hosts
         run: |
+          # Make sure we have a valid IP
+          if [[ -z "${{ steps.get-ip.outputs.instance_ip }}" ]]; then
+            echo "Failed to get instance IP from Terraform output"
+            echo "Running terraform output to debug:"
+            cd terraform && terraform output
+            exit 1
+          fi
+          
+          echo "Using instance IP: ${{ steps.get-ip.outputs.instance_ip }}"
           sed -i "s/{{ instance_ip }}/${{ steps.get-ip.outputs.instance_ip }}/g" ansible/hosts.ini
+          cat ansible/hosts.ini
       
       - name: Wait for SSH to become available
         run: |
