@@ -47,6 +47,12 @@ jobs:
           cd terraform
           terraform apply -auto-approve tfplan
           echo "EC2_PUBLIC_IP=$(terraform output -raw ec2_public_ip)" >> $GITHUB_ENV
+          echo "EC2_INSTANCE_ID=$(terraform output -raw ec2_instance_id)" >> $GITHUB_ENV
+
+      - name: Debug Terraform Outputs
+        run: |
+          echo "EC2 Instance ID: ${{ env.EC2_INSTANCE_ID }}"
+          echo "EC2 Public IP: ${{ env.EC2_PUBLIC_IP }}"
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -81,4 +87,17 @@ jobs:
 
       - name: Deploy with Ansible
         run: |
-          ansible-playbook -i ansible/hosts.ini ansible/deploy.yml 
+          ansible-playbook -i ansible/hosts.ini ansible/deploy.yml
+
+      - name: Test SSH Connection
+        run: |
+          # Wait for SSH to be available
+          echo "Waiting for SSH to be available on ${{ env.EC2_PUBLIC_IP }}..."
+          for i in {1..10}; do
+            if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 ec2-user@${{ env.EC2_PUBLIC_IP }} "echo SSH connection successful"; then
+              echo "SSH connection established!"
+              break
+            fi
+            echo "Attempt $i failed. Waiting 30 seconds..."
+            sleep 30
+          done 
