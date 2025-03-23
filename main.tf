@@ -349,15 +349,16 @@ resource "aws_codepipeline" "security_ai" {
     name = "Deploy"
     
     action {
-      name             = "AnsibleDeploy"
-      category         = "Build"
-      owner            = "AWS"
-      provider         = "CodeBuild"
-      version          = "1"
-      input_artifacts  = ["source_output"]
+      name            = "Deploy"
+      category        = "Deploy"
+      owner           = "AWS"
+      provider        = "CodeDeploy"
+      version         = "1"
+      input_artifacts = ["build_output"]
       
       configuration = {
-        ProjectName = aws_codebuild_project.security_ai.name
+        ApplicationName     = aws_codedeploy_app.security_ai.name
+        DeploymentGroupName = aws_codedeploy_deployment_group.security_ai.deployment_group_name
       }
     }
   }
@@ -450,6 +451,56 @@ resource "aws_iam_role_policy" "codebuild_s3_secrets_policy" {
       }
     ]
   })
+}
+
+# CodeDeploy Application
+resource "aws_codedeploy_app" "security_ai" {
+  name = "security-ai-app-${random_id.suffix.hex}"
+}
+
+# CodeDeploy Deployment Group
+resource "aws_codedeploy_deployment_group" "security_ai" {
+  app_name               = aws_codedeploy_app.security_ai.name
+  deployment_group_name  = "security-ai-deployment-group-${random_id.suffix.hex}"
+  service_role_arn       = aws_iam_role.codedeploy_role.arn
+  deployment_config_name = "CodeDeployDefault.AllAtOnce"
+
+  ec2_tag_set {
+    ec2_tag_filter {
+      key   = "Name"
+      type  = "KEY_AND_VALUE"
+      value = "Security-AI-Instance"
+    }
+  }
+
+  auto_rollback_configuration {
+    enabled = true
+    events  = ["DEPLOYMENT_FAILURE"]
+  }
+}
+
+# IAM role for CodeDeploy
+resource "aws_iam_role" "codedeploy_role" {
+  name = "security-ai-codedeploy-role-${random_id.suffix.hex}"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "codedeploy.amazonaws.com"
+        }
+      }
+    ]
+  })
+}
+
+# Attach AWS managed policy for CodeDeploy
+resource "aws_iam_role_policy_attachment" "codedeploy_policy" {
+  role       = aws_iam_role.codedeploy_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSCodeDeployRole"
 }
 
 output "instance_ip" {

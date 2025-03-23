@@ -12,7 +12,6 @@ phases:
   pre_build:
     commands:
       - echo "Starting pre-build phase"
-      - echo "Logging in to Docker Hub..."
       # - echo $DOCKER_PASSWORD | docker login -u $DOCKER_USERNAME --password-stdin
       
       # Install dependencies for testing
@@ -34,6 +33,10 @@ phases:
       # Build the application if build script exists
       - echo "Building application..."
       - if [ -f "package.json" ]; then npm run build || echo "No build script found"; fi
+      
+      # Copy your entire application code to a build directory
+      - echo "Copying application code..."
+      - cp -R ./* build/ || true
       
       # Create a Dockerfile if one doesn't exist
       - echo "Creating default Dockerfile..."
@@ -158,7 +161,7 @@ EOF
 echo "Stopping application at $(date)"
 
 # Navigate to app directory
-cd /opt/security-ai/app
+cd /opt/security-ai/app || exit 0
 
 # Gracefully stop the containers if docker-compose exists
 if [ -f "docker-compose.yml" ]; then
