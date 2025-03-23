@@ -1,0 +1,20 @@
+---
+- name: Test SSH connection and permissions
+  hosts: cloudsecure_instances
+  gather_facts: no
+  
+  tasks:
+    - name: Ping test
+      ping:
+      
+    - name: Test temp directory permissions
+      shell: |
+        mkdir -p /tmp/ansible-test && 
+        touch /tmp/ansible-test/testfile && 
+        ls -la /tmp/ansible-test/testfile && 
+        rm -rf /tmp/ansible-test
+      register: test_result
+      
+    - name: Show test result
+      debug:
+        var: test_result.stdout_lines
