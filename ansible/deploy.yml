@@ -7,6 +7,11 @@
     app_dir: /opt/cloudsecure
     docker_compose_version: "2.29.2"
     node_version: "18.x"
+    vault_db_user: "{{ lookup('env', 'DB_USER') | default('your_db_username', true) }}"
+    vault_db_password: "{{ lookup('env', 'DB_PASSWORD') | default('your_db_password', true) }}"
+    vault_mongo_user: "{{ lookup('env', 'MONGO_USER') | default('your_mongo_username', true) }}"
+    vault_mongo_password: "{{ lookup('env', 'MONGO_PASSWORD') | default('your_mongo_password', true) }}"
+    vault_jwt_secret: "{{ lookup('env', 'JWT_SECRET') | default('your_jwt_secret', true) }}"
 
   pre_tasks:
   - name: Ensure SSH connection is stable

@@ -1,0 +1,83 @@
+name: Security AI CI/CD
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+  INSTANCE_IP: ${{ secrets.INSTANCE_IP }}
+  SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+          
+      - name: Build application
+        run: |
+          # Add your build commands here
+          echo "Building application..."
+          # Example: Building Docker images
+          cd app/client
+          docker build -t security-ai-client .
+          cd ../server
+          docker build -t security-ai-server .
+      
+      - name: Test application
+        run: |
+          echo "Running tests..."
+          # Add test commands here
+    
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Install Ansible
+        run: |
+          sudo apt update
+          sudo apt install -y ansible
+      
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ env.INSTANCE_IP }} >> ~/.ssh/known_hosts
+      
+      - name: Deploy with Ansible
+        run: |
+          echo "[cloudsecure_instances]" > inventory.ini
+          echo "${{ env.INSTANCE_IP }} ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/id_rsa" >> inventory.ini
+          echo "" >> inventory.ini
+          echo "[cloudsecure_instances:vars]" >> inventory.ini
+          echo "ansible_python_interpreter=/usr/bin/python3" >> inventory.ini
+          
+          # Create ansible config to disable host key checking
+          echo "[defaults]" > ansible.cfg
+          echo "host_key_checking = False" >> ansible.cfg
+          
+          # Run the deployment playbook
+          ANSIBLE_CONFIG=ansible.cfg ansible-playbook -i inventory.ini ansible/deploy.yml
