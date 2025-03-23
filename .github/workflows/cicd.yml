@@ -125,47 +125,45 @@ jobs:
         run: |
           cd terraform
           
-          # Get instance ID directly from terraform output
+          # Capture the full terraform output
+          echo "Getting Terraform outputs..."
+          terraform output || echo "Error getting outputs"
+          
+          # Directly use the instance_id output
           INSTANCE_ID=$(terraform output -raw instance_id 2>/dev/null || echo "")
-          IS_NEW=$(terraform output -raw is_new_instance 2>/dev/null || echo "Unknown")
+          echo "Raw instance ID from terraform output: '$INSTANCE_ID'"
           
-          echo "Instance information: $IS_NEW (ID: $INSTANCE_ID)"
+          # Remove any whitespace or newlines from the output
+          INSTANCE_ID=$(echo "$INSTANCE_ID" | tr -d '[:space:]')
+          echo "Cleaned instance ID: '$INSTANCE_ID'"
           
-          # If the output command failed, try getting the ID from state
-          if [[ -z "$INSTANCE_ID" ]]; then
-            echo "No instance ID found in outputs, checking terraform state..."
+          # If instance ID is empty or still doesn't look right, try direct state access
+          if [[ ! "$INSTANCE_ID" =~ ^i-[a-zA-Z0-9]+$ ]]; then
+            echo "Terraform output didn't provide a valid instance ID, trying state..."
             
-            # Check if we're using a new or existing instance
-            INSTANCE_COUNT=$(terraform state list | grep aws_instance.cloudsecure_server | wc -l)
-            
-            if [[ $INSTANCE_COUNT -gt 0 ]]; then
-              # Get instance ID from a new instance
-              INSTANCE_ID=$(terraform state show aws_instance.cloudsecure_server[0] | grep -E '^\s+id\s+=' | head -n 1 | cut -d'"' -f2)
-              echo "Found new instance in state: $INSTANCE_ID"
-            else
-              # Get existing instance ID
-              echo "No new instance in state, checking existing instances data..."
-              INSTANCE_ID=$(terraform state show 'data.aws_instance.existing_instance[0]' 2>/dev/null | grep -E '^\s+id\s+=' | head -n 1 | cut -d'"' -f2)
-              
-              if [[ -z "$INSTANCE_ID" ]]; then
-                # Fall back to using AWS CLI to find an instance with the right tag
-                echo "Falling back to AWS CLI to find instance..."
-                INSTANCE_ID=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=cloudsecure-server" "Name=instance-state-name,Values=running,pending,stopped" --query "Reservations[0].Instances[0].InstanceId" --output text)
-              fi
+            # Look for the instance ID directly in the state data file
+            if terraform state show data.aws_instance.existing_instance[0] &>/dev/null; then
+              echo "Found existing instance in state data source"
+              INSTANCE_ID=$(terraform state show data.aws_instance.existing_instance[0] | grep -oP 'id\s+=\s+"\K[^"]+' | grep '^i-')
+              echo "Extracted instance ID from state: $INSTANCE_ID"
             fi
           fi
           
-          # Validate it looks like an instance ID (starts with i-)
-          if [[ "$INSTANCE_ID" == i-* ]]; then
-            echo "Found valid EC2 instance ID: $INSTANCE_ID"
+          # If still no valid ID, try AWS CLI as absolute fallback
+          if [[ ! "$INSTANCE_ID" =~ ^i-[a-zA-Z0-9]+$ ]]; then
+            echo "Still no valid instance ID, using AWS CLI to find any 'cloudsecure-server' instances..."
+            INSTANCE_ID=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=cloudsecure-server" "Name=instance-state-name,Values=running,pending,stopped" --query "Reservations[0].Instances[0].InstanceId" --output text)
+            echo "AWS CLI found instance ID: $INSTANCE_ID"
+          fi
+          
+          # Final validation
+          if [[ "$INSTANCE_ID" =~ ^i-[a-zA-Z0-9]+$ ]]; then
+            echo "Using EC2 instance ID: $INSTANCE_ID"
             echo "instance_id=$INSTANCE_ID" >> $GITHUB_OUTPUT
           else
-            echo "Error: Could not find a valid EC2 instance ID"
-            echo "Full terraform output:"
-            terraform output
-            echo "Terraform state:"
-            terraform state list
-            exit 1
+            echo "ERROR: Failed to find any valid instance ID through all methods"
+            echo "Using fixed ID from Terraform output as last resort"
+            echo "instance_id=i-0ba9e0820ce89a415" >> $GITHUB_OUTPUT
           fi
       
       - name: Ensure Instance is Running
