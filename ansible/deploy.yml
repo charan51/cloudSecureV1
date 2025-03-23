@@ -32,15 +32,6 @@
         msg: "OS Info: {{ ansible_distribution }} {{ ansible_distribution_version }}"
       tags: debug
 
-    - name: Ensure Ansible tmp directory exists
-      ansible.builtin.file:
-        path: "/tmp/ansible-ec2-user/tmp"
-        state: directory
-        mode: '0755'  # Relaxed permissions to ensure accessibility
-        owner: ec2-user
-        group: ec2-user
-      tags: setup
-
   tasks:
     - name: Add Node.js 16.x repository (compatible with Amazon Linux 2)
       ansible.builtin.shell: curl -fsSL https://rpm.nodesource.com/setup_16.x | bash -
@@ -118,21 +109,13 @@
 
     - name: Wait for SSH to become available after reset
       ansible.builtin.wait_for_connection:
-        delay: 10  # Increased delay for stability
-        timeout: 120  # Extended timeout
+        delay: 15  # Increased delay for more stability
+        timeout: 180  # Extended timeout
       tags: user
 
-    - name: Re-ensure Ansible tmp directory permissions post-reset
-      ansible.builtin.file:
-        path: "/tmp/ansible-ec2-user/tmp"
-        state: directory
-        mode: '0755'  # Relaxed permissions
-        owner: ec2-user
-        group: ec2-user
-      tags: user
-
-    - name: Verify SSH connectivity post-reset
-      ansible.builtin.shell: whoami && ls -ld /tmp/ansible-ec2-user/tmp
+    - name: Verify SSH connectivity and tmp directory post-reset
+      ansible.builtin.shell: |
+        whoami && ls -ld /tmp && mkdir -p /tmp/test-dir && touch /tmp/test-dir/testfile && rm -rf /tmp/test-dir
       register: ssh_verify
       become: no  # Run as ec2-user
       tags: debug
@@ -140,18 +123,6 @@
     - name: Debug SSH verification
       ansible.builtin.debug:
         msg: "SSH verification output: {{ ssh_verify.stdout_lines }}"
-      tags: debug
-
-    - name: Debug remote tmp directory and disk space
-      ansible.builtin.shell: |
-        df -h /tmp && ls -ld /tmp && whoami && touch /tmp/ansible-ec2-user/tmp/testfile && rm /tmp/ansible-ec2-user/tmp/testfile
-      register: debug_output
-      become: no  # Run as ec2-user to test permissions
-      tags: debug
-
-    - name: Show debug output
-      ansible.builtin.debug:
-        msg: "{{ debug_output.stdout_lines }}"
       tags: debug
 
     - name: Create application directory
