@@ -7,7 +7,7 @@
   vars:
     app_dir: /opt/cloudsecure
     docker_compose_version: "2.29.2"
-    node_version: "18.x"
+    node_version: "16.x"
     vault_db_user: "your_db_username"
     vault_db_password: "your_db_password"
     vault_mongo_user: "your_mongo_username"
@@ -30,19 +30,52 @@
     debug:
       msg: "OS Info: {{ ansible_distribution }} {{ ansible_distribution_version }}"
       
-  - name: Add Node.js 18.x repository
-    shell: curl -fsSL https://rpm.nodesource.com/setup_18.x | bash -
+  - name: Add Node.js 16.x repository (compatible with Amazon Linux 2)
+    shell: curl -fsSL https://rpm.nodesource.com/setup_16.x | bash -
+    args:
+      executable: /bin/bash
 
-  # Install Docker using shell module with proper parameters
+  # Add delay to avoid yum lock issues
+  - name: Wait for any existing yum processes to finish
+    pause:
+      seconds: 10
+
   - name: Install Docker using yum
     shell: yum install -y docker
     args:
       executable: /bin/bash
+    register: docker_install_result
+    retries: 3
+    delay: 10
+    until: docker_install_result is succeeded
 
-  - name: Install required packages using yum
-    shell: yum install -y git python3 python3-pip nodejs
+  # Add delay to avoid yum lock issues
+  - name: Wait for yum processes to finish
+    pause:
+      seconds: 10
+
+  - name: Install git and python dependencies
+    shell: yum install -y git python3 python3-pip
     args:
       executable: /bin/bash
+    register: git_install_result
+    retries: 3
+    delay: 10
+    until: git_install_result is succeeded
+
+  # Add delay to avoid yum lock issues
+  - name: Wait for yum processes to finish
+    pause:
+      seconds: 10
+
+  - name: Install nodejs (compatible version)
+    shell: yum install -y nodejs
+    args:
+      executable: /bin/bash
+    register: nodejs_install_result
+    retries: 3
+    delay: 10
+    until: nodejs_install_result is succeeded
 
   - name: Install Docker Compose (legacy binary)
     get_url:
