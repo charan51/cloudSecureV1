@@ -153,9 +153,10 @@
   - name: Run Docker Compose
     shell: |
       cd {{ app_dir }}
-      docker compose up -d --build
+      ECR_REPOSITORY_URI=security-ai docker compose up -d --build
     environment:
       COMPOSE_HTTP_TIMEOUT: "200"
+      ECR_REPOSITORY_URI: "security-ai"
 
   - name: Check if containers are running
     command: docker compose ps
@@ -206,6 +207,13 @@
       dest: /etc/logrotate.d/docker-container-logs
       mode: '0644'
     notify: Run logrotate
+
+  - name: Ensure Docker Compose environment variables are set
+    copy:
+      content: |
+        ECR_REPOSITORY_URI=security-ai
+      dest: "{{ app_dir }}/.env"
+      mode: '0644'
 
   handlers:
   - name: Run logrotate

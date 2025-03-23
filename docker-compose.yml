@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   client:
-    image: ${ECR_REPOSITORY_URI}/security-ai-client:latest
+    image: ${ECR_REPOSITORY_URI:-security-ai}/security-ai-client:latest
     build:
       context: ./app/client
       dockerfile: Dockerfile

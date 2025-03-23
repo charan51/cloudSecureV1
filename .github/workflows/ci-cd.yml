@@ -78,6 +78,35 @@ jobs:
           echo "aws_access_key_id = ${{ secrets.AWS_ACCESS_KEY_ID }}" >> ~/.aws/credentials
           echo "aws_secret_access_key = ${{ secrets.AWS_SECRET_ACCESS_KEY }}" >> ~/.aws/credentials
       
+      - name: Create project environment files
+        run: |
+          # Create .env file for Docker Compose
+          cat > .env << EOF
+          ECR_REPOSITORY_URI=security-ai
+          EOF
+          
+          # Create client .env file
+          mkdir -p app/client
+          cat > app/client/.env << EOF
+          REACT_APP_API_URL=http://localhost:3000
+          NODE_ENV=development
+          EOF
+          
+          # Create server .env file
+          mkdir -p app/server
+          cat > app/server/.env << EOF
+          PORT=3000
+          NODE_ENV=development
+          DB_HOST=db-service
+          DB_USER=admin
+          DB_PASSWORD=adminpassword
+          DB_NAME=security_ai
+          REDIS_HOST=redis-service
+          MONGODB_URI=mongodb://mongo-user:mongo-password@mongo-service:27017/cloudsecure?authSource=admin
+          CLIENT_URL=http://localhost
+          JWT_SECRET=temporary_secret_key
+          EOF
+      
       - name: Deploy with Ansible
         run: |
           echo "[cloudsecure_instances]" > inventory.ini
@@ -98,3 +127,14 @@ jobs:
             ansible/deploy.yml
         env:
           AWS_DEFAULT_REGION: us-east-1
+
+      - name: Set up Docker image names
+        run: |
+          echo "Setting up Docker image names..."
+          # Create a .env file with the correct image references
+          cat > ${GITHUB_WORKSPACE}/.env << EOF
+          ECR_REPOSITORY_URI=security-ai
+          EOF
+          
+          # Copy this file to the server if needed
+          scp -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ${GITHUB_WORKSPACE}/.env ec2-user@ec2-3-83-87-177.compute-1.amazonaws.com:/opt/cloudsecure/.env
