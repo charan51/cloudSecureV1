@@ -1,3 +1,13 @@
+# Configure the Terraform backend
+terraform {
+  backend "s3" {
+    bucket         = "terraform-state-418295714127"
+    key            = "cloudsecure/terraform.tfstate"
+    region         = "us-east-1"
+    dynamodb_table = "terraform-locks"
+  }
+}
+
 # Provider configuration
 provider "aws" {
   region = "us-east-1"
@@ -122,7 +132,7 @@ resource "aws_security_group" "security_ai" {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"] # Restrict this in production to GitHub Actions IPs
+    cidr_blocks = ["192.30.252.0/22"] # GitHub Actions IP range
   }
 
   egress {
@@ -160,22 +170,22 @@ resource "aws_instance" "security_ai" {
   }
 }
 
-# OIDC Identity Provider for GitHub Actions
-resource "aws_iam_openid_connect_provider" "github" {
-  url = "https://token.actions.githubusercontent.com"
-
-  client_id_list = [
-    "sts.amazonaws.com"
-  ]
-
-  thumbprint_list = [
-    "74f3a68f16524f15424927704c9506f55a9316bd" # Updated thumbprint for GitHub OIDC
-  ]
-}
+# OIDC Identity Provider for GitHub Actions (commented out since it already exists)
+# resource "aws_iam_openid_connect_provider" "github" {
+#   url = "https://token.actions.githubusercontent.com"
+#
+#   client_id_list = [
+#     "sts.amazonaws.com"
+#   ]
+#
+#   thumbprint_list = [
+#     "74f3a68f16524f15424927704c9506f55a9316bd"
+#   ]
+# }
 
 # IAM Role for GitHub Actions to assume
 resource "aws_iam_role" "github_actions_role" {
-  name = "GitHubActionsRole-${random_id.suffix.hex}"
+  name = "GitHubActionsRole"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -183,7 +193,7 @@ resource "aws_iam_role" "github_actions_role" {
       {
         Effect = "Allow"
         Principal = {
-          Federated = aws_iam_openid_connect_provider.github.arn
+          Federated = "arn:aws:iam::418295714127:oidc-provider/token.actions.githubusercontent.com"
         }
         Action = "sts:AssumeRoleWithWebIdentity"
         Condition = {
@@ -203,7 +213,7 @@ resource "aws_iam_role" "github_actions_role" {
 
 # IAM Policy for GitHub Actions role
 resource "aws_iam_role_policy" "github_actions_policy" {
-  name = "GitHubActionsPolicy-${random_id.suffix.hex}"
+  name = "GitHubActionsPolicy"
   role = aws_iam_role.github_actions_role.id
 
   policy = jsonencode({
@@ -216,12 +226,34 @@ resource "aws_iam_role_policy" "github_actions_policy" {
           "s3:ListBucket",
           "s3:PutBucketPublicAccessBlock",
           "s3:PutObject",
-          "s3:DeleteBucket"
+          "s3:DeleteBucket",
+          "s3:GetBucketTagging",
+          "s3:PutBucketTagging",
+          "s3:GetBucketPolicy",
+          "s3:PutBucketPolicy"
         ]
         Resource = [
-          "arn:aws:s3:::security-ai-secrets-${random_id.suffix.hex}",
-          "arn:aws:s3:::security-ai-secrets-${random_id.suffix.hex}/*"
+          "arn:aws:s3:::security-ai-secrets-*",
+          "arn:aws:s3:::security-ai-secrets-*/*"
         ]
+        Effect = "Allow"
+      },
+      {
+        Action = [
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject"
+        ]
+        Resource = "arn:aws:s3:::terraform-state-418295714127/cloudsecure/terraform.tfstate"
+        Effect = "Allow"
+      },
+      {
+        Action = [
+          "dynamodb:GetItem",
+          "dynamodb:PutItem",
+          "dynamodb:DeleteItem"
+        ]
+        Resource = "arn:aws:dynamodb:us-east-1:418295714127:table/terraform-locks"
         Effect = "Allow"
       },
       {
@@ -231,7 +263,10 @@ resource "aws_iam_role_policy" "github_actions_policy" {
           "iam:CreateOpenIDConnectProvider",
           "iam:PassRole",
           "iam:GetRole",
+          "iam:GetInstanceProfile",
           "iam:ListRoles",
+          "iam:ListRolePolicies",
+          "iam:ListAttachedRolePolicies",
           "iam:DeleteRole",
           "iam:AttachRolePolicy",
           "iam:DetachRolePolicy",
