@@ -33,16 +33,16 @@
   - name: Add Node.js 18.x repository
     shell: curl -fsSL https://rpm.nodesource.com/setup_18.x | bash -
 
-  # Install Docker using the correct service name for Amazon Linux 2
+  # Install Docker using shell module with proper parameters
   - name: Install Docker using yum
     shell: yum install -y docker
     args:
-      warn: false
+      executable: /bin/bash
 
   - name: Install required packages using yum
     shell: yum install -y git python3 python3-pip nodejs
     args:
-      warn: false
+      executable: /bin/bash
 
   - name: Install Docker Compose (legacy binary)
     get_url:
@@ -79,7 +79,7 @@
       owner: ec2-user
       group: ec2-user
 
-  - name: Copy application files
+  - name: Create application subdirectories
     file:
       path: "{{ app_dir }}/{{ item }}"
       state: directory
@@ -103,16 +103,16 @@
   - name: Run Docker Compose
     become_user: ec2-user
     shell: |
-      cd {{ app_dir }} && docker-compose up -d
+      cd {{ app_dir }} && /usr/local/bin/docker-compose up -d
     args:
-      warn: false
-    environment:
-      PATH: /usr/local/bin:{{ ansible_env.PATH }}
+      executable: /bin/bash
 
   - name: Check if containers are running
     become_user: ec2-user
     shell: |
-      cd {{ app_dir }} && docker-compose ps
+      cd {{ app_dir }} && /usr/local/bin/docker-compose ps
+    args:
+      executable: /bin/bash
     register: container_status
     changed_when: false
 
