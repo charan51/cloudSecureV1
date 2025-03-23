@@ -1,4 +1,3 @@
----
 - name: Deploy cloudsecure app on EC2
   hosts: ec2_instance
   become: true
@@ -17,7 +16,7 @@
       service:
         name: docker
         state: started
-        enabled: true
+        enabled: yes
 
     - name: Install Docker Compose
       get_url:
@@ -25,12 +24,28 @@
         dest: /usr/local/bin/docker-compose
         mode: '0755'
 
+    - name: Copy client image tar
+      copy:
+        src: cloudsecure-client.tar
+        dest: /home/ec2-user/cloudsecure-client.tar
+
+    - name: Copy server image tar
+      copy:
+        src: cloudsecure-server.tar
+        dest: /home/ec2-user/cloudsecure-server.tar
+
     - name: Copy Docker Compose file
       copy:
         src: ../app/docker-compose.yml
         dest: /home/ec2-user/docker-compose.yml
 
-    - name: Pull and run Docker Compose services
+    - name: Load client image
+      shell: docker load -i /home/ec2-user/cloudsecure-client.tar
+
+    - name: Load server image
+      shell: docker load -i /home/ec2-user/cloudsecure-server.tar
+
+    - name: Start Docker Compose services
       shell: docker-compose -f /home/ec2-user/docker-compose.yml up -d
       args:
         chdir: /home/ec2-user/

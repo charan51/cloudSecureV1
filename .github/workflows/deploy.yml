@@ -20,33 +20,20 @@ jobs:
 
       - name: Build server image
         run: docker build -t cloudsecure-server:latest ./app/server
-      - name: Checkout code
-        uses: actions/checkout@v3
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+      - name: Save client image as tar
+        run: docker save -o cloudsecure-client.tar cloudsecure-client:latest
 
-      - name: Login to Docker Hub
-        uses: docker/login-action@v2
+      - name: Save server image as tar
+        run: docker save -o cloudsecure-server.tar cloudsecure-server:latest
+
+      - name: Upload images as artifacts
+        uses: actions/upload-artifact@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Build and push client image
-        uses: docker/build-push-action@v4
-        with:
-          context: ./app/client
-          file: ./app/client/Dockerfile
-          push: true
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/cloudsecure-client:latest
-
-      - name: Build and push server image
-        uses: docker/build-push-action@v4
-        with:
-          context: ./app/server
-          file: ./app/server/Dockerfile
-          push: true
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/cloudsecure-server:latest
+          name: docker-images
+          path: |
+            cloudsecure-client.tar
+            cloudsecure-server.tar
 
   deploy:
     runs-on: ubuntu-latest
@@ -54,6 +41,12 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
+
+      - name: Download Docker image artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: docker-images
+          path: .
 
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v2
