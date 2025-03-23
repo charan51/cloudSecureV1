@@ -40,73 +40,67 @@ jobs:
           cd terraform
           terraform plan -out=tfplan
 
-      - name: Terraform Apply
+      - name: Terraform Apply Using Shell Script
         if: github.event_name != 'pull_request'
         run: |
+          # Create a shell script to handle Terraform output
+          cat > apply_terraform.sh << 'EOF'
+          #!/bin/bash
+          set -e
+
           cd terraform
           terraform apply -auto-approve tfplan
-          
-          # Debug Terraform outputs
-          echo "Terraform outputs:"
-          terraform output
-          
-          # Get the instance ID directly
-          INSTANCE_ID=$(terraform output -raw ec2_instance_id || echo "")
+
+          # Write outputs to files
+          terraform output -json > tf_output.json
+
+          # Extract values using grep and sed (no extra dependencies)
+          INSTANCE_ID=$(grep -o '"ec2_instance_id": {[^}]*"value": "[^"]*"' tf_output.json | sed 's/.*"value": "\([^"]*\)".*/\1/')
+          PUBLIC_IP=$(grep -o '"ec2_public_ip": {[^}]*"value": "[^"]*"' tf_output.json | sed 's/.*"value": "\([^"]*\)".*/\1/')
+
           echo "Instance ID: $INSTANCE_ID"
-          
-          # Wait for the instance to get a public IP (in case it's delayed)
-          echo "Waiting for public IP assignment..."
-          for i in {1..10}; do
-            PUBLIC_IP=$(terraform output -raw ec2_public_ip || echo "")
-            echo "Attempt $i - Public IP: $PUBLIC_IP"
+          echo "Public IP: $PUBLIC_IP"
+
+          # Validate IP address format
+          if [[ -z "$PUBLIC_IP" || ! "$PUBLIC_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "No valid public IP found in Terraform output. Trying AWS CLI..."
             
-            if [[ -n "$PUBLIC_IP" && "$PUBLIC_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-              echo "Valid public IP found: $PUBLIC_IP"
-              break
-            fi
-            
-            if [ $i -eq 10 ]; then
-              echo "Failed to get a valid public IP after multiple attempts"
-              exit 1
-            fi
-            
-            echo "Waiting 10 seconds for IP assignment..."
-            sleep 10
-            
-            # Refresh Terraform state
-            terraform refresh
-          done
-          
-          # Save the outputs to files
+            # Wait for the instance to be fully created and get a public IP
+            for i in {1..5}; do
+              echo "Attempt $i to get public IP from AWS CLI..."
+              PUBLIC_IP=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --query 'Reservations[].Instances[].PublicIpAddress' --output text)
+              
+              if [[ -n "$PUBLIC_IP" && "$PUBLIC_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                echo "Valid public IP found from AWS CLI: $PUBLIC_IP"
+                break
+              fi
+              
+              if [ $i -eq 5 ]; then
+                echo "Failed to get a valid public IP after 5 attempts"
+                exit 1
+              fi
+              
+              echo "Waiting 20 seconds for IP assignment..."
+              sleep 20
+            done
+          fi
+
+          # Write the values to files in the parent directory
           echo "$INSTANCE_ID" > ../instance_id.txt
           echo "$PUBLIC_IP" > ../public_ip.txt
+          EOF
 
-      - name: Verify EC2 Instance
+          # Make the script executable
+          chmod +x apply_terraform.sh
+
+          # Run the script
+          ./apply_terraform.sh
+
+      - name: Display Infrastructure Info
         if: github.event_name != 'pull_request'
         run: |
-          # Get instance ID from previous step
-          INSTANCE_ID=$(cat instance_id.txt || echo "")
-          
-          if [[ -z "$INSTANCE_ID" ]]; then
-            echo "Error: No instance ID found"
-            exit 1
-          fi
-          
-          echo "Checking EC2 instance status..."
-          aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --query 'Reservations[].Instances[].{InstanceId:InstanceId,State:State.Name,PublicIP:PublicIpAddress}'
-          
-          # Get public IP directly from AWS (as a fallback)
-          PUBLIC_IP=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --query 'Reservations[].Instances[].PublicIpAddress' --output text)
-          
-          echo "Public IP from AWS API: $PUBLIC_IP"
-          
-          if [[ -n "$PUBLIC_IP" && "$PUBLIC_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Valid public IP found from AWS API: $PUBLIC_IP"
-            echo "$PUBLIC_IP" > public_ip.txt
-          else
-            echo "Error: Could not get a valid public IP for the instance"
-            exit 1
-          fi
+          echo "EC2 Instance ID: $(cat instance_id.txt)"
+          echo "EC2 Public IP: $(cat public_ip.txt)"
 
       - name: Set up Python
         if: github.event_name != 'pull_request'
@@ -123,19 +117,20 @@ jobs:
       - name: Create Ansible inventory
         if: github.event_name != 'pull_request'
         run: |
-          # Get the public IP from the file
           PUBLIC_IP=$(cat public_ip.txt)
-          echo "Using IP: $PUBLIC_IP for Ansible"
+          echo "Creating Ansible inventory for IP: $PUBLIC_IP"
           
-          # Create the inventory file
           mkdir -p ansible
-          echo "[cloudsecure_instances]" > ansible/hosts.ini
-          echo "$PUBLIC_IP ansible_user=ec2-user ansible_ssh_private_key_file=~/.ssh/id_rsa ansible_ssh_common_args='-o StrictHostKeyChecking=no'" >> ansible/hosts.ini
-          echo "" >> ansible/hosts.ini
-          echo "[cloudsecure_instances:vars]" >> ansible/hosts.ini
-          echo "ansible_python_interpreter=/usr/bin/python3" >> ansible/hosts.ini
+          cat > ansible/hosts.ini << EOF
+          [cloudsecure_instances]
+          $PUBLIC_IP ansible_user=ec2-user ansible_ssh_private_key_file=~/.ssh/id_rsa
+
+          [cloudsecure_instances:vars]
+          ansible_python_interpreter=/usr/bin/python3
+          ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+          EOF
           
-          echo "Created Ansible inventory:"
+          echo "Ansible inventory created:"
           cat ansible/hosts.ini
 
       - name: Set up SSH key
@@ -151,33 +146,46 @@ jobs:
           echo "  UserKnownHostsFile=/dev/null" >> ~/.ssh/config
           chmod 600 ~/.ssh/config
 
-      - name: Wait for SSH access
+      - name: Wait for SSH connection
         if: github.event_name != 'pull_request'
         run: |
           PUBLIC_IP=$(cat public_ip.txt)
-          echo "Waiting for SSH access to $PUBLIC_IP..."
+          echo "Testing SSH connection to $PUBLIC_IP"
           
-          for i in {1..15}; do
-            echo "Attempt $i..."
-            if ssh -i ~/.ssh/id_rsa -o ConnectTimeout=10 ec2-user@$PUBLIC_IP "echo SSH Ready"; then
+          # Create a script to test SSH connection
+          cat > test_ssh.sh << 'EOF'
+          #!/bin/bash
+          
+          IP=$1
+          ATTEMPTS=15
+          INTERVAL=20
+          
+          for ((i=1; i<=ATTEMPTS; i++)); do
+            echo "SSH connection attempt $i of $ATTEMPTS..."
+            if ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no -o ConnectTimeout=10 -o UserKnownHostsFile=/dev/null ec2-user@$IP exit 2>/dev/null; then
               echo "SSH connection successful!"
-              break
+              exit 0
             fi
             
-            if [ $i -eq 15 ]; then
-              echo "Failed to establish SSH connection after 15 attempts"
+            echo "Attempt $i failed. Waiting $INTERVAL seconds..."
+            sleep $INTERVAL
+            
+            if [ $i -eq $ATTEMPTS ]; then
+              echo "Failed to establish SSH connection after $ATTEMPTS attempts."
               
-              # Check security group
+              # Check security group rules
               INSTANCE_ID=$(cat instance_id.txt)
               echo "Security group configuration:"
-              aws ec2 describe-instances --instance-ids $INSTANCE_ID --query 'Reservations[].Instances[].SecurityGroups[]'
+              aws ec2 describe-instances --instance-ids $INSTANCE_ID --query 'Reservations[].Instances[].SecurityGroups[].GroupId' --output text | 
+              xargs -I {} aws ec2 describe-security-groups --group-ids {} --query 'SecurityGroups[].IpPermissions[]'
               
               exit 1
             fi
-            
-            echo "Waiting 20 seconds..."
-            sleep 20
           done
+          EOF
+          
+          chmod +x test_ssh.sh
+          ./test_ssh.sh "$PUBLIC_IP"
 
       - name: Deploy with Ansible
         if: github.event_name != 'pull_request'
