@@ -36,27 +36,37 @@ jobs:
           terraform init
 
       - name: Terraform Plan
-        id: terraform-plan
         run: |
           cd terraform
           terraform plan -out=tfplan
 
-      - name: Terraform Apply
+      - name: Terraform Apply and Extract Outputs
         if: github.event_name != 'pull_request'
         run: |
           cd terraform
           terraform apply -auto-approve tfplan
-          # Directly extract the outputs and save them to files
-          terraform output -raw ec2_instance_id > ../instance_id.txt
-          terraform output -raw ec2_public_ip > ../public_ip.txt
+          
+          # Extract outputs and save to simple text files
+          echo "Extracting outputs..."
+          terraform output -json > outputs.json
+          
+          # Use jq to extract the values safely
+          echo $(jq -r '.ec2_instance_id.value' outputs.json) > instance_id.txt
+          echo $(jq -r '.ec2_public_ip.value' outputs.json) > public_ip.txt
+          
+          # Move files to parent directory for other steps
+          mv instance_id.txt ../instance_id.txt
+          mv public_ip.txt ../public_ip.txt
+          
+          # Display the outputs directly
+          echo "EC2 Instance ID: $(cat ../instance_id.txt)"
+          echo "EC2 Public IP: $(cat ../public_ip.txt)"
 
-      - name: Display EC2 Information
+      - name: Install jq
         if: github.event_name != 'pull_request'
         run: |
-          INSTANCE_ID=$(cat instance_id.txt)
-          PUBLIC_IP=$(cat public_ip.txt)
-          echo "EC2 Instance ID: $INSTANCE_ID"
-          echo "EC2 Public IP: $PUBLIC_IP"
+          sudo apt-get update
+          sudo apt-get install -y jq
 
       - name: Set up Python
         if: github.event_name != 'pull_request'
@@ -73,9 +83,15 @@ jobs:
       - name: Create Ansible inventory
         if: github.event_name != 'pull_request'
         run: |
-          # Read public IP from file
+          # Get the public IP directly from the file
           PUBLIC_IP=$(cat public_ip.txt)
-          echo "Using EC2 Public IP: $PUBLIC_IP"
+          echo "Public IP from file: $PUBLIC_IP"
+          
+          # Validate IP address format
+          if [[ ! $PUBLIC_IP =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Error: Invalid IP address format: $PUBLIC_IP"
+            exit 1
+          fi
           
           # Create inventory file
           mkdir -p ansible
@@ -85,7 +101,6 @@ jobs:
           echo "[cloudsecure_instances:vars]" >> ansible/hosts.ini
           echo "ansible_python_interpreter=/usr/bin/python3" >> ansible/hosts.ini
           
-          # Display inventory file
           echo "Created Ansible inventory:"
           cat ansible/hosts.ini
 
@@ -97,44 +112,47 @@ jobs:
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
           
-          # Read public IP and add to known hosts
+          # Get public IP and add to known hosts
           PUBLIC_IP=$(cat public_ip.txt)
-          echo "Adding $PUBLIC_IP to known hosts"
+          echo "Setting up SSH for IP: $PUBLIC_IP"
           
-          # Use the IP address explicitly with ssh-keyscan
-          if [ -n "$PUBLIC_IP" ]; then
-            ssh-keyscan -H "$PUBLIC_IP" >> ~/.ssh/known_hosts
-            echo "Added $PUBLIC_IP to known hosts"
-          else
-            echo "Error: Public IP is empty"
-            exit 1
-          fi
+          # Skip host key checking for Ansible
+          echo "StrictHostKeyChecking no" > ~/.ssh/config
+          chmod 600 ~/.ssh/config
 
-      - name: Test SSH connection
+      - name: Wait for instance to be ready
         if: github.event_name != 'pull_request'
         run: |
           PUBLIC_IP=$(cat public_ip.txt)
-          echo "Testing SSH connection to $PUBLIC_IP"
+          echo "Waiting for instance to be ready at $PUBLIC_IP..."
           
-          # Disable strict host key checking temporarily for the test
-          for i in {1..12}; do
-            if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 -i ~/.ssh/id_rsa ec2-user@$PUBLIC_IP exit 2>/dev/null; then
-              echo "SSH connection successful!"
-              exit 0
+          MAX_RETRIES=15
+          RETRY_INTERVAL=20
+          
+          for ((i=1; i<=MAX_RETRIES; i++)); do
+            echo "Attempt $i of $MAX_RETRIES..."
+            if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 -i ~/.ssh/id_rsa ec2-user@$PUBLIC_IP "echo SSH connection successful"; then
+              echo "SSH connection established!"
+              break
             fi
             
-            echo "Attempt $i failed. Waiting 20 seconds..."
-            sleep 20
-            
-            if [ $i -eq 12 ]; then
-              echo "Failed to establish SSH connection after 12 attempts"
+            if [ $i -eq $MAX_RETRIES ]; then
+              echo "Failed to connect after $MAX_RETRIES attempts"
+              echo "DEBUG: AWS instance details:"
+              aws ec2 describe-instances --instance-ids $(cat instance_id.txt) --query 'Reservations[].Instances[].{State:State.Name,PublicIP:PublicIpAddress,SecurityGroups:SecurityGroups}'
               exit 1
             fi
+            
+            echo "Waiting $RETRY_INTERVAL seconds before next attempt..."
+            sleep $RETRY_INTERVAL
           done
 
       - name: Deploy with Ansible
         if: github.event_name != 'pull_request'
         run: |
+          # For debugging
           PUBLIC_IP=$(cat public_ip.txt)
-          echo "Deploying to $PUBLIC_IP"
-          ansible-playbook -i ansible/hosts.ini ansible/deploy.yml -v 
+          echo "Deploying to $PUBLIC_IP with Ansible"
+          
+          # Run with verbose logging
+          ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook -i ansible/hosts.ini ansible/deploy.yml -vvv 
