@@ -2,63 +2,27 @@ provider "aws" {
   region = var.aws_region
 }
 
-# Create VPC
-resource "aws_vpc" "cloudsecure_vpc" {
-  cidr_block           = "10.0.0.0/16"
-  enable_dns_hostnames = true
-  enable_dns_support   = true
+# Use default VPC and its resources instead of creating new ones
+data "aws_vpc" "default" {
+  default = true
+}
 
-  tags = {
-    Name = "cloudsecure-vpc"
+data "aws_subnets" "default" {
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.default.id]
   }
 }
 
-# Create Internet Gateway
-resource "aws_internet_gateway" "cloudsecure_igw" {
-  vpc_id = aws_vpc.cloudsecure_vpc.id
-
-  tags = {
-    Name = "cloudsecure-igw"
-  }
+data "aws_subnet" "default" {
+  id = data.aws_subnets.default.ids[0]
 }
 
-# Create Public Subnet
-resource "aws_subnet" "cloudsecure_subnet" {
-  vpc_id                  = aws_vpc.cloudsecure_vpc.id
-  cidr_block              = "10.0.1.0/24"
-  map_public_ip_on_launch = true
-  availability_zone       = "${var.aws_region}a"
-
-  tags = {
-    Name = "cloudsecure-subnet"
-  }
-}
-
-# Create Route Table
-resource "aws_route_table" "cloudsecure_rtb" {
-  vpc_id = aws_vpc.cloudsecure_vpc.id
-
-  route {
-    cidr_block = "0.0.0.0/0"
-    gateway_id = aws_internet_gateway.cloudsecure_igw.id
-  }
-
-  tags = {
-    Name = "cloudsecure-rtb"
-  }
-}
-
-# Associate Route Table with Subnet
-resource "aws_route_table_association" "cloudsecure_rta" {
-  subnet_id      = aws_subnet.cloudsecure_subnet.id
-  route_table_id = aws_route_table.cloudsecure_rtb.id
-}
-
-# Create Security Group
+# Create Security Group in the default VPC
 resource "aws_security_group" "cloudsecure_sg" {
   name        = "cloudsecure-sg"
   description = "Allow web and SSH traffic"
-  vpc_id      = aws_vpc.cloudsecure_vpc.id
+  vpc_id      = data.aws_vpc.default.id
 
   # Allow HTTP
   ingress {
@@ -104,12 +68,12 @@ resource "aws_security_group" "cloudsecure_sg" {
   }
 }
 
-# Create EC2 instance
+# Create EC2 instance in the default VPC
 resource "aws_instance" "cloudsecure_server" {
   ami                         = var.aws_ami_id
   instance_type               = var.aws_instance_type
   key_name                    = var.aws_key_name
-  subnet_id                   = aws_subnet.cloudsecure_subnet.id
+  subnet_id                   = data.aws_subnet.default.id
   vpc_security_group_ids      = [aws_security_group.cloudsecure_sg.id]
   associate_public_ip_address = true
 
