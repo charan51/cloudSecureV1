@@ -79,7 +79,23 @@ jobs:
         id: get-ip
         run: |
           cd terraform
-          INSTANCE_IP=$(terraform output -json instance_public_ip | jq -r '.')
+          
+          # Get the raw output without using jq
+          INSTANCE_IP=$(terraform output instance_public_ip)
+          
+          # Clean up the output (remove quotes if present)
+          INSTANCE_IP=$(echo "$INSTANCE_IP" | tr -d '"')
+          
+          echo "Raw IP output: $INSTANCE_IP"
+          
+          # Validate IP format
+          if [[ ! $INSTANCE_IP =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Warning: IP address doesn't match expected format"
+            echo "Falling back to terraform show for debugging"
+            terraform show
+          fi
+          
+          # Write to output even if format is unexpected
           echo "instance_ip=${INSTANCE_IP}" >> $GITHUB_OUTPUT
       
       - name: Update Ansible hosts
@@ -98,10 +114,26 @@ jobs:
       
       - name: Wait for SSH to become available
         run: |
-          until ssh -i ~/.ssh/cloudsecure.pem -o StrictHostKeyChecking=no -o ConnectTimeout=5 ec2-user@${{ steps.get-ip.outputs.instance_ip }} "echo SSH available"; do
-            echo "SSH not available yet..."
-            sleep 10
+          echo "Waiting for SSH on ${{ steps.get-ip.outputs.instance_ip }} to become available..."
+          # Set a maximum number of attempts
+          MAX_ATTEMPTS=20
+          COUNTER=0
+          
+          while [ $COUNTER -lt $MAX_ATTEMPTS ]; do
+            if ssh -i ~/.ssh/cloudsecure.pem -o StrictHostKeyChecking=no -o ConnectTimeout=5 -o BatchMode=yes ec2-user@${{ steps.get-ip.outputs.instance_ip }} "echo SSH available" 2>/dev/null; then
+              echo "SSH connection established successfully"
+              break
+            fi
+            
+            echo "Attempt $COUNTER: SSH not available yet, retrying in 15 seconds..."
+            sleep 15
+            COUNTER=$((COUNTER+1))
           done
+          
+          if [ $COUNTER -eq $MAX_ATTEMPTS ]; then
+            echo "Failed to establish SSH connection after $MAX_ATTEMPTS attempts"
+            exit 1
+          fi
 
       - name: Install Ansible
         run: |
