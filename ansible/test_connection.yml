@@ -4,15 +4,20 @@
   gather_facts: no
   
   tasks:
-    - name: Ping test
-      ping:
+    - name: Get Python version
+      raw: python3 --version
+      register: python_version
       
-    - name: Test temp directory permissions
-      shell: |
-        mkdir -p /tmp/ansible-test && 
-        touch /tmp/ansible-test/testfile && 
-        ls -la /tmp/ansible-test/testfile && 
-        rm -rf /tmp/ansible-test
+    - name: Show Python version
+      debug:
+        var: python_version.stdout_lines
+      
+    - name: Test temp directory permissions (raw)
+      raw: |
+        mkdir -p /tmp/.ansible-tmp && 
+        touch /tmp/.ansible-tmp/testfile && 
+        ls -la /tmp/.ansible-tmp/testfile && 
+        rm -rf /tmp/.ansible-tmp/testfile
       register: test_result
       
     - name: Show test result
