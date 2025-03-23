@@ -186,9 +186,18 @@ jobs:
             exit 1
           fi
           
-          # Update the Ansible hosts file
-          echo "Using instance IP: $IP_ADDRESS"
-          sed -i "s/{{ instance_ip }}/$IP_ADDRESS/g" ansible/hosts.ini
+          # Create a customized hosts file with proper SSH user
+          cat > ansible/hosts.ini << EOF
+[cloudsecure_servers]
+$IP_ADDRESS ansible_user=ec2-user
+
+[all:vars]
+ansible_ssh_private_key_file=~/.ssh/cloudsecure.pem
+ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+EOF
+          
+          # Show the hosts file
+          echo "Created Ansible hosts file:"
           cat ansible/hosts.ini
       
       - name: Wait for SSH to become available
@@ -196,26 +205,59 @@ jobs:
           # Read the IP address directly from file
           IP_ADDRESS=$(cat ip.txt)
           
+          echo "Getting EC2 instance console output for debugging..."
+          aws ec2 get-console-output --instance-id ${{ steps.get-instance.outputs.instance_id }} || echo "Could not get console output"
+          
           echo "Waiting for SSH on $IP_ADDRESS to become available..."
+          
           # Set a maximum number of attempts
-          MAX_ATTEMPTS=20
+          MAX_ATTEMPTS=30
           COUNTER=0
           
           while [ $COUNTER -lt $MAX_ATTEMPTS ]; do
-            if ssh -i ~/.ssh/cloudsecure.pem -o StrictHostKeyChecking=no -o ConnectTimeout=5 -o BatchMode=yes ec2-user@$IP_ADDRESS "echo SSH available" 2>/dev/null; then
-              echo "SSH connection established successfully"
+            echo "Attempt $COUNTER: Trying to connect via SSH..."
+            
+            # Test SSH with multiple users
+            for USER in ec2-user root ubuntu; do
+              if ssh -v -i ~/.ssh/cloudsecure.pem -o StrictHostKeyChecking=no -o ConnectTimeout=10 -o BatchMode=yes -o UserKnownHostsFile=/dev/null $USER@$IP_ADDRESS "echo SSH available" 2>/dev/null; then
+                echo "SSH connection established successfully with user: $USER"
+                # Store the successful user for later steps
+                echo "SSH_USER=$USER" >> $GITHUB_ENV
+                # Skip further attempts
+                COUNTER=$MAX_ATTEMPTS
+                break
+              fi
+            done
+            
+            # If we've reached the maximum attempts, don't wait
+            if [ $COUNTER -ge $MAX_ATTEMPTS ]; then
               break
             fi
             
-            echo "Attempt $COUNTER: SSH not available yet, retrying in 15 seconds..."
-            sleep 15
+            # Check instance status to see if it's ready
+            INSTANCE_STATUS=$(aws ec2 describe-instance-status --instance-ids ${{ steps.get-instance.outputs.instance_id }} --query "InstanceStatuses[0].InstanceStatus.Status" --output text)
+            echo "Instance status: $INSTANCE_STATUS"
+            
+            if [[ "$INSTANCE_STATUS" != "ok" ]]; then
+              echo "Instance not ready yet, waiting longer..."
+              sleep 30
+            else
+              echo "Instance ready, waiting for SSH service..."
+              sleep 15
+            fi
+            
             COUNTER=$((COUNTER+1))
           done
           
-          if [ $COUNTER -eq $MAX_ATTEMPTS ]; then
+          # If we didn't set SSH_USER, all attempts failed
+          if [[ -z "$SSH_USER" ]]; then
             echo "Failed to establish SSH connection after $MAX_ATTEMPTS attempts"
+            echo "Security group configuration:"
+            aws ec2 describe-security-groups --group-ids $(aws ec2 describe-instances --instance-ids ${{ steps.get-instance.outputs.instance_id }} --query "Reservations[0].Instances[0].SecurityGroups[0].GroupId" --output text)
             exit 1
           fi
+          
+          echo "Will use SSH user: $SSH_USER for subsequent steps"
 
       - name: Install Ansible
         run: |
@@ -224,8 +266,21 @@ jobs:
 
       - name: Run Ansible playbook
         run: |
+          # Update ansible hosts file with the successful SSH user if we found one
+          if [[ -n "${{ env.SSH_USER }}" ]]; then
+            sed -i "s/ansible_user=ec2-user/ansible_user=${{ env.SSH_USER }}/g" ansible/hosts.ini
+            echo "Updated Ansible hosts to use user: ${{ env.SSH_USER }}"
+            cat ansible/hosts.ini
+          fi
+          
+          # Debug connection
+          echo "Testing SSH connection with ansible ping:"
           cd ansible
-          ansible-playbook deploy.yml
+          ansible -m ping all -v
+          
+          # Run the actual playbook
+          echo "Running Ansible playbook:"
+          ansible-playbook deploy.yml -v
       
       - name: Verify Deployment
         run: |

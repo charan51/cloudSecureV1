@@ -89,11 +89,22 @@ resource "aws_instance" "cloudsecure_server" {
 
   user_data = <<-EOF
               #!/bin/bash
+              # Update system
               yum update -y
               yum install -y docker git
+
+              # Configure SSH for faster availability
+              sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+              sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
+              systemctl restart sshd
+
+              # Configure Docker
               systemctl start docker
               systemctl enable docker
               curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
               chmod +x /usr/local/bin/docker-compose
+              
+              # Signal that the instance is ready
+              touch /tmp/instance-ready
               EOF
 }
