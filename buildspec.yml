@@ -3,7 +3,7 @@ version: 0.2
 phases:
   install:
     runtime-versions:
-      nodejs: 18  # Match your app’s Node.js version
+      nodejs: 18
     commands:
       - echo "Starting installation phase"
       - npm --version
@@ -48,10 +48,14 @@ phases:
       - echo "EC2 Instance IP: $INSTANCE_IP"
       # Generate Ansible inventory dynamically
       - cd $CODEBUILD_SRC_DIR/ansible
-      - echo "[cloudsecure_instances]" > inventory.ini
-      - echo "$INSTANCE_IP ansible_user=ec2-user ansible_ssh_private_key_file=/tmp/cloudsecure.pem" >> inventory.ini
-      - echo "[cloudsecure_instances:vars]" >> inventory.ini
-      - echo "ansible_python_interpreter=/usr/bin/python3" >> inventory.ini
+      - |
+        cat << EOF > inventory.ini
+[cloudsecure_instances]
+$INSTANCE_IP ansible_user=ec2-user ansible_ssh_private_key_file=/tmp/cloudsecure.pem
+
+[cloudsecure_instances:vars]
+ansible_python_interpreter=/usr/bin/python3
+EOF
       # Fetch the SSH key (assuming it’s stored in S3)
       - aws s3 cp s3://security-ai-secrets-<suffix>/cloudsecure.pem /tmp/cloudsecure.pem
       - chmod 400 /tmp/cloudsecure.pem
@@ -66,5 +70,5 @@ phases:
 
 artifacts:
   files:
-    - '**/*'  # Include all files for potential debugging
+    - '**/*'
   discard-paths: no
