@@ -58,6 +58,7 @@
       ansible.builtin.yum:
         name: docker
         state: present
+        use_backend: yum  # Explicitly specify yum backend
       retries: 3
       delay: 10
       register: docker_install_result
@@ -71,6 +72,7 @@
           - python3
           - python3-pip
         state: present
+        use_backend: yum  # Explicitly specify yum backend
       retries: 3
       delay: 10
       register: git_install_result
@@ -81,6 +83,7 @@
       ansible.builtin.yum:
         name: nodejs
         state: present
+        use_backend: yum  # Explicitly specify yum backend
       retries: 3
       delay: 10
       register: nodejs_install_result
@@ -203,6 +206,7 @@
       ansible.builtin.yum:
         name: cronie
         state: present
+        use_backend: yum  # Explicitly specify yum backend
       tags: backup
 
     - name: Setup backup cron job
@@ -233,6 +237,7 @@
       ansible.builtin.yum:
         name: yum-cron
         state: present
+        use_backend: yum  # Explicitly specify yum backend
       tags: security
 
     - name: Configure yum-cron for security updates
