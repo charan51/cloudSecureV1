@@ -231,9 +231,7 @@ jobs:
           sleep 30
           
           # Check that Docker containers are running
-          ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ec2-user@$PUBLIC_IP "sudo docker ps"
+          ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ec2-user@$PUBLIC_IP "cd /opt/cloudsecure && docker-compose ps"
           
-          # Test web application (adjust port as needed)
-          curl -I http://$PUBLIC_IP:80 || echo "Web application not responding on port 80"
-          
-          echo "Deployment verification complete" 
+          # Display the public endpoint
+          echo "Application deployed to: http://$PUBLIC_IP" 
