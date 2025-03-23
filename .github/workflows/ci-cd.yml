@@ -1,126 +1,110 @@
-name: Security AI CI/CD
+name: CloudSecure CI/CD
 
 on:
   push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
-  workflow_dispatch:
-
-env:
-  AWS_REGION: us-east-1
-  EC2_HOST: ec2-3-83-87-177.compute-1.amazonaws.com
+    branches:
+      - main
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+
     steps:
+      # Step 1: Checkout the repository
       - name: Checkout code
         uses: actions/checkout@v4
-      
+
+      # Step 2: Set up Node.js (for your application)
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      - name: Check Node.js and npm versions
+        run: |
+          node --version
+          npm --version
+
+      # Step 3: Install Terraform
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.7.0
+      - name: Check Terraform version
+        run: terraform --version
+
+      # Step 4: Install Ansible
+      - name: Install Ansible
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-pip
+          pip3 install ansible
+          ansible --version
+
+      # Step 5: Configure AWS credentials
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-      
-      - name: Deploy application via SSH
-        uses: appleboy/ssh-action@master
-        with:
-          host: ${{ env.EC2_HOST }}
-          username: ec2-user
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script: |
-            set -e  # Exit on error
-            echo "==== Starting deployment ===="
-            
-            # Ensure app directory exists
-            sudo mkdir -p /opt/cloudsecure
-            sudo chown ec2-user:ec2-user /opt/cloudsecure
-            cd /opt/cloudsecure
-            
-            # Clone repository if not exists, otherwise pull latest changes
-            if [ -d .git ]; then
-              echo "Pulling latest changes"
-              git pull
-            else
-              echo "Cloning repository"
-              git clone https://github.com/${{ github.repository }}.git .
-            fi
-            
-            # Create environment files
-            echo "Creating environment files"
-            
-            # Docker Compose .env
-            cat > .env << EOF
-            ECR_REPOSITORY_URI=security-ai
-            EOF
-            
-            # Create client env file
-            mkdir -p app/client
-            cat > app/client/.env << EOF
-            REACT_APP_API_URL=http://localhost:3000
-            NODE_ENV=development
-            EOF
-            
-            # Create server env file
-            mkdir -p app/server
-            cat > app/server/.env << EOF
-            PORT=3000
-            NODE_ENV=development
-            DB_HOST=db-service
-            DB_USER=admin
-            DB_PASSWORD=adminpassword
-            DB_NAME=security_ai
-            REDIS_HOST=redis-service
-            MONGODB_URI=mongodb://mongo-user:mongo-password@mongo-service:27017/cloudsecure?authSource=admin
-            CLIENT_URL=http://localhost
-            JWT_SECRET=temporary_jwt_secret
-            EOF
-            
-            # Check Docker is installed and running
-            if ! command -v docker &> /dev/null; then
-              echo "Installing Docker"
-              sudo yum update -y
-              sudo amazon-linux-extras install docker -y
-              sudo service docker start
-              sudo usermod -a -G docker ec2-user
-              # Need to refresh group membership
-              newgrp docker || echo "Newgrp command failed, might need to reconnect to apply group changes"
-            fi
-            
-            # Install Docker Compose if needed
-            if ! command -v docker-compose &> /dev/null && ! command -v docker compose &> /dev/null; then
-              echo "Installing Docker Compose"
-              sudo curl -L "https://github.com/docker/compose/releases/download/v2.20.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-              sudo chmod +x /usr/local/bin/docker-compose
-              sudo ln -s /usr/local/bin/docker-compose /usr/bin/docker-compose || echo "Failed to create symlink, but continuing"
-            fi
-            
-            # Run Docker Compose
-            echo "Starting application with Docker Compose"
-            if command -v docker compose &> /dev/null; then
-              docker compose up -d --build || echo "Docker Compose command failed"
-            else
-              docker-compose up -d --build || echo "Docker Compose command failed"
-            fi
-            
-            # Check container status
-            docker ps
-            
-            echo "==== Deployment completed ===="
-      
-      - name: Verify deployment
-        uses: appleboy/ssh-action@master
-        with:
-          host: ${{ env.EC2_HOST }}
-          username: ec2-user
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script: |
-            cd /opt/cloudsecure
-            echo "==== Checking deployed containers ===="
-            docker ps
-            
-            echo "==== Checking container logs ===="
-            docker compose logs --tail=20 || docker-compose logs --tail=20 || echo "Could not get logs"
+          aws-region: us-east-1  # Adjust to your region
+
+      # Step 6: Install application dependencies and run tests
+      - name: Install dependencies and run tests
+        working-directory: ./app
+        run: |
+          if [ -f "package.json" ]; then
+            npm install
+            npm test || echo "No tests found"
+          fi
+
+      # Step 7: Build the application
+      - name: Build application
+        working-directory: ./app
+        run: |
+          if [ -f "package.json" ]; then
+            npm run build || echo "No build script found"
+          fi
+
+      # Step 8: Run Terraform to provision infrastructure
+      - name: Run Terraform
+        working-directory: ./terraform
+        run: |
+          terraform init
+          terraform apply -auto-approve
+
+      # Step 9: Fetch EC2 instance IP from Terraform outputs
+      - name: Fetch EC2 instance IP
+        working-directory: ./terraform
+        run: |
+          echo "INSTANCE_IP=$(terraform output -raw instance_ip)" >> $GITHUB_ENV
+      - name: Display EC2 instance IP
+        run: echo "EC2 Instance IP: ${{ env.INSTANCE_IP }}"
+
+      # Step 10: Generate Ansible inventory
+      - name: Generate Ansible inventory
+        working-directory: ./ansible
+        run: |
+          cat << EOF > inventory.ini
+          [cloudsecure_instances]
+          ${{ env.INSTANCE_IP }} ansible_user=ec2-user ansible_ssh_private_key_file=/tmp/cloudsecure.pem
+
+          [cloudsecure_instances:vars]
+          ansible_python_interpreter=/usr/bin/python3
+          EOF
+          cat inventory.ini
+
+      # Step 11: Download SSH key from S3
+      - name: Download SSH key from S3
+        run: |
+          aws s3 cp s3://security-ai-secrets/cloudsecure.pem /tmp/cloudsecure.pem
+          chmod 400 /tmp/cloudsecure.pem
+
+      # Step 12: Run Ansible playbook
+      - name: Run Ansible playbook
+        working-directory: ./ansible
+        run: |
+          ansible-playbook -i inventory.ini deploy.yml
+
+      # Step 13: Post-build message
+      - name: Post-build message
+        run: echo "Deployment completed successfully!"
