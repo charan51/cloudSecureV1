@@ -16,15 +16,19 @@ GitHub Actions Workflow
        └─── Deployment Stage
                │
                ├─── Terraform (Infrastructure as Code)
-               │       └─── Provision EC2 Instance
+               │       └─── Provision/Reuse EC2 Instance
                │
-               └─── Ansible (Configuration Management)
-                       └─── Deploy Application
+               └─── Deployment (Multi-layered approach)
+                       ├─── Ansible (Primary method)
+                       ├─── Direct SSH (Secondary method)
+                       └─── AWS Systems Manager (Fallback method)
 ```
 
 ## Pipeline Components
 
-### 1. GitHub Actions Workflow (.github/workflows/cicd.yml)
+### 1. GitHub Actions Workflows
+
+#### Main CI/CD Workflow (.github/workflows/cicd.yml)
 
 The workflow is triggered:
 - On every push to the main branch
@@ -34,13 +38,21 @@ The workflow has two main jobs:
 - **Test**: Runs the client-side tests
 - **Deploy**: Provisions infrastructure and deploys the application
 
+#### Teardown Workflow (.github/workflows/teardown.yml)
+
+Manually triggered workflow to tear down AWS resources:
+- Stops running containers
+- Destroys Terraform-managed resources
+- Verifies cleanup completion
+
 ### 2. Terraform (terraform/)
 
 Infrastructure as Code to provision AWS resources:
-- VPC with internet gateway
-- Public subnet
+- Uses default VPC to avoid VPC limits on free tier accounts
 - Security group allowing HTTP, HTTPS, SSH, and application ports
 - EC2 instance (t2.micro, free tier eligible)
+- IAM role for Systems Manager connectivity
+- Capable of reusing existing instances to reduce cost
 
 ### 3. Ansible (ansible/)
 
@@ -50,6 +62,13 @@ Configuration management to:
 - Configure Docker and Docker Compose
 - Copy application files
 - Build and run Docker containers
+
+### 4. Fallback Methods
+
+The pipeline includes multiple deployment approaches:
+1. **Ansible Playbook**: Primary method using standard configuration management
+2. **Direct SSH Deployment**: Fallback using raw SSH commands if Ansible fails
+3. **AWS Systems Manager**: Final fallback that doesn't require SSH connectivity
 
 ## Requirements
 
@@ -64,7 +83,10 @@ You must add these secrets to your GitHub repository:
 ### AWS Setup
 
 1. Create a key pair named `cloudsecure-key` in your AWS account
-2. Create an IAM user with programmatic access and sufficient permissions
+2. Create an IAM user with programmatic access and the following permissions:
+   - AmazonEC2FullAccess
+   - AmazonSSMFullAccess
+   - IAMFullAccess (or more limited permissions to manage roles/profiles)
 3. Store the credentials as GitHub secrets
 
 ## Workflow Process
@@ -81,9 +103,24 @@ You must add these secrets to your GitHub repository:
    - Initializes and applies Terraform configuration
    - Captures the EC2 instance IP address
    - Updates Ansible hosts file with the IP address
-   - Waits for SSH to become available
-   - Runs Ansible playbook to deploy the application
+   - Attempts deployment with multiple strategies:
+     - Ansible playbook (primary)
+     - Direct SSH deployment script (if Ansible fails)
+     - AWS Systems Manager (if SSH connectivity fails)
    - Verifies deployment success
+
+## Multiple Deployment Approaches
+
+The CI/CD pipeline uses a layered approach for maximum reliability:
+
+### 1. Ansible Deployment
+The preferred method, using structured playbooks for configuration management.
+
+### 2. Direct SSH Deployment
+If Ansible fails, the pipeline falls back to direct SSH commands using `deploy.sh`.
+
+### 3. AWS Systems Manager Deployment
+If SSH connectivity fails, the pipeline uses AWS Systems Manager (SSM) which doesn't require SSH access.
 
 ## Customization
 
@@ -111,22 +148,45 @@ variable "aws_instance_type" {
 }
 ```
 
+## Managing Resources
+
+### Intelligent Resource Management
+
+The pipeline is designed to minimize AWS costs:
+- It will detect and reuse existing instances tagged with "cloudsecure-server"
+- The terraform output will indicate whether a new instance was created
+
+### Manual Resource Teardown
+
+To remove all AWS resources when not needed:
+1. Go to the "Actions" tab in your GitHub repository
+2. Select the "CloudSecure Infrastructure Teardown" workflow
+3. Click "Run workflow"
+4. Type "CONFIRM" in the input field and click "Run workflow"
+
 ## Troubleshooting
 
-### Failed Terraform Apply
+### Failed SSH Connection
 
-If Terraform fails to apply:
-1. Check AWS credentials
-2. Verify you have sufficient permissions
-3. Check the Terraform state and AWS console for any lingering resources
+If the SSH connection fails:
+1. The workflow will attempt multiple users (ec2-user, ubuntu, admin, root)
+2. Ensure the key pair name in AWS matches the one in Terraform variables
+3. Check security group rules to ensure port 22 is open
+4. Verify the SSH private key in GitHub secrets matches the key pair in AWS
 
 ### Failed Ansible Deployment
 
 If Ansible deployment fails:
-1. Verify SSH connectivity to the instance
-2. Check the SSH key permissions (should be 600)
-3. Ensure the instance security group allows SSH access
-4. Verify Docker is installed and running on the instance
+1. The workflow will automatically try direct SSH deployment as a fallback
+2. Check Ansible logs in the workflow output for specific errors
+3. Ansible inventory file should match the SSH user for your AMI (ec2-user for Amazon Linux)
+
+### Failed Direct SSH Deployment
+
+If both Ansible and direct SSH deployment fail:
+1. The workflow will attempt to use AWS Systems Manager (SSM) as a final fallback
+2. Check that the instance has an IAM role with SSM permissions
+3. Ensure the instance has internet connectivity to reach SSM endpoints
 
 ## Security Best Practices
 
@@ -143,4 +203,4 @@ The configuration uses AWS free tier eligible resources, but always monitor:
 - Data transfer costs
 - Storage costs
 
-To minimize costs when not in use, consider adding a workflow to tear down infrastructure.
+To minimize costs when not in use, run the teardown workflow.

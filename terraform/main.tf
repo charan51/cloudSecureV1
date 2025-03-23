@@ -18,6 +18,32 @@ data "aws_subnet" "default" {
   id = data.aws_subnets.default.ids[0]
 }
 
+# IAM role for SSM
+resource "aws_iam_role" "ssm_role" {
+  name = "cloudsecure-ssm-role-${formatdate("YYMMDDhhmmss", timestamp())}"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "ec2.amazonaws.com"
+        }
+      }
+    ]
+  })
+
+  managed_policy_arns = [
+    "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+  ]
+
+  tags = {
+    Name = "cloudsecure-ssm-role"
+  }
+}
+
 # Create Security Group in the default VPC
 resource "aws_security_group" "cloudsecure_sg" {
   name        = var.security_group_name
@@ -94,6 +120,12 @@ data "aws_instance" "existing_instance" {
   instance_id = local.use_existing ? data.aws_instances.existing_cloudsecure.ids[0] : ""
 }
 
+# Create IAM instance profile for SSM
+resource "aws_iam_instance_profile" "ssm_instance_profile" {
+  name = "cloudsecure-ssm-profile-${formatdate("YYMMDDhhmmss", timestamp())}"
+  role = aws_iam_role.ssm_role.name
+}
+
 # Create EC2 instance in the default VPC only if no existing instance
 resource "aws_instance" "cloudsecure_server" {
   count                       = local.use_existing ? 0 : 1
@@ -103,6 +135,7 @@ resource "aws_instance" "cloudsecure_server" {
   subnet_id                   = data.aws_subnet.default.id
   vpc_security_group_ids      = [aws_security_group.cloudsecure_sg.id]
   associate_public_ip_address = true
+  iam_instance_profile        = aws_iam_instance_profile.ssm_instance_profile.name
 
   tags = {
     Name = "cloudsecure-server"

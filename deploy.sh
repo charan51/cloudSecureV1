@@ -4,11 +4,13 @@
 # Server details
 SERVER_IP="34.236.33.219"
 SSH_USER="ec2-user"
-SSH_KEY="/Users/rainx/Documents/GitHub/cloudSecureV1/cloudsecure.pem"
+SSH_KEY="/Users/rainx/Documents/GitHub/cloudSecureV1/cloudsecure-key.pem"
 APP_DIR="/opt/cloudsecure"
 
-# Ensure SSH key has correct permissions
-chmod 600 ${SSH_KEY}
+# Ensure SSH key has correct permissions if it exists
+if [ -f "${SSH_KEY}" ]; then
+  chmod 600 ${SSH_KEY}
+fi
 
 echo "=== CloudSecure Direct Deployment ==="
 echo "Target server: ${SERVER_IP}"
