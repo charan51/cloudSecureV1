@@ -73,7 +73,59 @@ jobs:
         run: cd terraform && terraform init
       
       - name: Terraform Apply
-        run: cd terraform && terraform apply -auto-approve
+        run: |
+          cd terraform
+          
+          # First try with regular apply
+          if terraform apply -auto-approve; then
+            echo "Terraform apply succeeded"
+          else
+            echo "Terraform apply failed, checking for specific errors..."
+            
+            # Check for security group duplicate error
+            if terraform apply -auto-approve 2>&1 | grep -q "InvalidGroup.Duplicate"; then
+              echo "Found duplicate security group error, applying alternative approach"
+              
+              # Try to find and use an existing security group instead
+              SG_ID=$(aws ec2 describe-security-groups --filters "Name=vpc-id,Values=$(aws ec2 describe-vpcs --filters "Name=isDefault,Values=true" --query "Vpcs[0].VpcId" --output text)" "Name=group-name,Values=default" --query "SecurityGroups[0].GroupId" --output text)
+              
+              if [ -n "$SG_ID" ]; then
+                echo "Using existing default security group: $SG_ID"
+                # Create a temporary variables override file
+                cat > override.tf << EOF
+                resource "aws_security_group" "cloudsecure_sg" {
+                  count = 0
+                }
+                
+                locals {
+                  security_group_id = "$SG_ID"
+                }
+                
+                resource "aws_instance" "cloudsecure_server" {
+                  vpc_security_group_ids = [local.security_group_id]
+                }
+                EOF
+                
+                # Try apply again with the override
+                terraform apply -auto-approve
+              else
+                echo "Could not find default security group, attempting with a random name"
+                # Create a temporary variables override file with a random name
+                RANDOM_SUFFIX=$(cat /dev/urandom | tr -dc 'a-z0-9' | fold -w 8 | head -n 1)
+                cat > override.tf << EOF
+                resource "aws_security_group" "cloudsecure_sg" {
+                  name = "cloudsecure-sg-$RANDOM_SUFFIX"
+                }
+                EOF
+                
+                # Try apply again with the override
+                terraform apply -auto-approve
+              fi
+            else
+              echo "Terraform apply failed for reasons other than duplicate security group"
+              exit 1
+            fi
+          fi
         
       - name: Get EC2 IP Address
         id: get-ip

@@ -20,8 +20,8 @@ data "aws_subnet" "default" {
 
 # Create Security Group in the default VPC
 resource "aws_security_group" "cloudsecure_sg" {
-  name        = "cloudsecure-sg"
-  description = "Allow web and SSH traffic"
+  name        = "cloudsecure-sg-${formatdate("YYYYMMDD-hhmmss", timestamp())}"
+  description = "Allow web and SSH traffic for CloudSecure"
   vpc_id      = data.aws_vpc.default.id
 
   # Allow HTTP
