@@ -35,170 +35,170 @@ phases:
       - echo "Building application..."
       - if [ -f "package.json" ]; then npm run build || echo "No build script found"; fi
       
-      # Create a Dockerfile if one doesn't exist - FIXED SYNTAX
+      # Create a Dockerfile if one doesn't exist
       - echo "Creating default Dockerfile..."
       - |
         if [ ! -f "Dockerfile" ]; then
-          cat > Dockerfile << 'DOCKERFILE_EOF'
-          FROM node:12-alpine
-          WORKDIR /app
-          COPY package*.json ./
-          RUN npm install --production
-          COPY . .
-          EXPOSE 3000
-          CMD ["npm", "start"]
-          DOCKERFILE_EOF
+          cat > Dockerfile << EOF
+FROM node:12-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm install --production
+COPY . .
+EXPOSE 3000
+CMD ["npm", "start"]
+EOF
         fi
       
-      # Create a Docker Compose file - FIXED SYNTAX
+      # Create a Docker Compose file
       - echo "Creating docker-compose.yml..."
       - |
-        cat > docker-compose.yml << 'COMPOSE_EOF'
-        version: '3'
-        services:
-          app:
-            build: .
-            restart: always
-            ports:
-              - "3000:3000"
-            volumes:
-              - ./:/app
-              - /app/node_modules
-            environment:
-              - NODE_ENV=production
-        COMPOSE_EOF
+        cat > docker-compose.yml << EOF
+version: '3'
+services:
+  app:
+    build: .
+    restart: always
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./:/app
+      - /app/node_modules
+    environment:
+      - NODE_ENV=production
+EOF
       
-      # Create a robust installation script - FIXED SYNTAX
+      # Create a robust installation script
       - echo "Creating installation script..."
       - |
-        cat > scripts/before_install.sh << 'SCRIPT_EOF'
-        #!/bin/bash
-        
-        echo "Installation started at $(date)"
-        
-        # Create application directory
-        mkdir -p /opt/security-ai/app
-        
-        # Install Docker
-        echo "Installing Docker using official Docker script..."
-        curl -fsSL https://get.docker.com -o get-docker.sh
-        sh ./get-docker.sh
-        
-        # Start and enable Docker
-        systemctl start docker
-        systemctl enable docker
-        
-        # Install Docker Compose
-        echo "Installing Docker Compose..."
-        curl -L "https://github.com/docker/compose/releases/download/v2.24.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-        chmod +x /usr/local/bin/docker-compose
-        ln -sf /usr/local/bin/docker-compose /usr/bin/docker-compose
-        
-        # Verify installations
-        docker --version
-        docker-compose --version
-        
-        echo "Installation completed at $(date)"
-        SCRIPT_EOF
+        cat > scripts/before_install.sh << 'EOF'
+#!/bin/bash
+
+echo "Installation started at $(date)"
+
+# Create application directory
+mkdir -p /opt/security-ai/app
+
+# Install Docker
+echo "Installing Docker using official Docker script..."
+curl -fsSL https://get.docker.com -o get-docker.sh
+sh ./get-docker.sh
+
+# Start and enable Docker
+systemctl start docker
+systemctl enable docker
+
+# Install Docker Compose
+echo "Installing Docker Compose..."
+curl -L "https://github.com/docker/compose/releases/download/v2.24.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+chmod +x /usr/local/bin/docker-compose
+ln -sf /usr/local/bin/docker-compose /usr/bin/docker-compose
+
+# Verify installations
+docker --version
+docker-compose --version
+
+echo "Installation completed at $(date)"
+EOF
       - chmod +x scripts/before_install.sh
       
-      # Create a deployment script - FIXED SYNTAX
+      # Create a deployment script
       - echo "Creating deployment script..."
       - |
-        cat > scripts/deploy.sh << 'SCRIPT_EOF'
-        #!/bin/bash
-        
-        echo "Deployment started at $(date)"
-        
-        # Navigate to application directory
-        cd /opt/security-ai/app
-        
-        # Stop any existing containers
-        if [ -f "docker-compose.yml" ]; then
-          docker-compose down || true
-        fi
-        
-        # Build and start containers
-        docker-compose up -d --build
-        
-        # Check the status
-        docker-compose ps
-        
-        # Display logs
-        docker-compose logs -t --tail=20
-        
-        # Perform health check
-        echo "Performing health check..."
-        for i in {1..12}; do
-          if curl -s http://localhost:3000/health || curl -s http://localhost:3000/; then
-            echo "Application is running!"
-            break
-          fi
-          
-          if [ $i -eq 12 ]; then
-            echo "Health check failed after 60 seconds"
-            docker-compose logs
-            exit 1
-          fi
-          
-          echo "Waiting for application to start... (Attempt $i/12)"
-          sleep 5
-        done
-        
-        echo "Deployment completed successfully at $(date)"
-        SCRIPT_EOF
+        cat > scripts/deploy.sh << 'EOF'
+#!/bin/bash
+
+echo "Deployment started at $(date)"
+
+# Navigate to application directory
+cd /opt/security-ai/app
+
+# Stop any existing containers
+if [ -f "docker-compose.yml" ]; then
+  docker-compose down || true
+fi
+
+# Build and start containers
+docker-compose up -d --build
+
+# Check the status
+docker-compose ps
+
+# Display logs
+docker-compose logs -t --tail=20
+
+# Perform health check
+echo "Performing health check..."
+for i in {1..12}; do
+  if curl -s http://localhost:3000/health || curl -s http://localhost:3000/; then
+    echo "Application is running!"
+    break
+  fi
+  
+  if [ $i -eq 12 ]; then
+    echo "Health check failed after 60 seconds"
+    docker-compose logs
+    exit 1
+  fi
+  
+  echo "Waiting for application to start... (Attempt $i/12)"
+  sleep 5
+done
+
+echo "Deployment completed successfully at $(date)"
+EOF
       - chmod +x scripts/deploy.sh
       
-      # Create an application stop script - FIXED SYNTAX
+      # Create an application stop script
       - echo "Creating application stop script..."
       - |
-        cat > scripts/application_stop.sh << 'SCRIPT_EOF'
-        #!/bin/bash
-        
-        echo "Stopping application at $(date)"
-        
-        # Navigate to app directory
-        cd /opt/security-ai/app
-        
-        # Gracefully stop the containers if docker-compose exists
-        if [ -f "docker-compose.yml" ]; then
-          docker-compose down || true
-        else
-          # Find and stop containers by name pattern
-          CONTAINERS=$(docker ps -q --filter "name=security-ai")
-          if [ ! -z "$CONTAINERS" ]; then
-            docker stop $CONTAINERS
-          fi
-        fi
-        
-        echo "Application stopped at $(date)"
-        SCRIPT_EOF
+        cat > scripts/application_stop.sh << 'EOF'
+#!/bin/bash
+
+echo "Stopping application at $(date)"
+
+# Navigate to app directory
+cd /opt/security-ai/app
+
+# Gracefully stop the containers if docker-compose exists
+if [ -f "docker-compose.yml" ]; then
+  docker-compose down || true
+else
+  # Find and stop containers by name pattern
+  CONTAINERS=$(docker ps -q --filter "name=security-ai")
+  if [ ! -z "$CONTAINERS" ]; then
+    docker stop $CONTAINERS
+  fi
+fi
+
+echo "Application stopped at $(date)"
+EOF
       - chmod +x scripts/application_stop.sh
       
-      # Create appspec.yml for CodeDeploy - FIXED SYNTAX
+      # Create appspec.yml for CodeDeploy
       - echo "Creating appspec.yml..."
       - |
-        cat > appspec.yml << 'APPSPEC_EOF'
-        version: 0.0
-        os: linux
-        files:
-          - source: /
-            destination: /opt/security-ai/app
-            overwrite: true
-        hooks:
-          ApplicationStop:
-            - location: scripts/application_stop.sh
-              timeout: 300
-              runas: root
-          BeforeInstall:
-            - location: scripts/before_install.sh
-              timeout: 900
-              runas: root
-          ApplicationStart:
-            - location: scripts/deploy.sh
-              timeout: 900
-              runas: root
-        APPSPEC_EOF
+        cat > appspec.yml << 'EOF'
+version: 0.0
+os: linux
+files:
+  - source: /
+    destination: /opt/security-ai/app
+    overwrite: true
+hooks:
+  ApplicationStop:
+    - location: scripts/application_stop.sh
+      timeout: 300
+      runas: root
+  BeforeInstall:
+    - location: scripts/before_install.sh
+      timeout: 900
+      runas: root
+  ApplicationStart:
+    - location: scripts/deploy.sh
+      timeout: 900
+      runas: root
+EOF
   
   post_build:
     commands:
