@@ -1,0 +1,36 @@
+---
+- name: Deploy cloudsecure app on EC2
+  hosts: ec2_instance
+  become: yes
+  tasks:
+    - name: Update package cache
+      yum:
+        name: "*"
+        state: latest
+
+    - name: Install Docker
+      yum:
+        name: docker
+        state: present
+
+    - name: Start Docker service
+      service:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Install Docker Compose
+      get_url:
+        url: https://github.com/docker/compose/releases/download/1.29.2/docker-compose-Linux-x86_64
+        dest: /usr/local/bin/docker-compose
+        mode: '0755'
+
+    - name: Copy Docker Compose file
+      copy:
+        src: ../app/docker-compose.yml
+        dest: /home/ec2-user/docker-compose.yml
+
+    - name: Pull and run Docker Compose services
+      shell: docker-compose -f /home/ec2-user/docker-compose.yml up -d
+      args:
+        chdir: /home/ec2-user/
