@@ -21,9 +21,15 @@ jobs:
         uses: actions/setup-node@v3
         with:
           node-version: 18
-          cache: 'npm'
-          cache-dependency-path: 'app/client/package-lock.json'
       
+      - name: Cache node modules
+        uses: actions/cache@v3
+        with:
+          path: app/client/node_modules
+          key: ${{ runner.os }}-node-${{ hashFiles('app/client/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+            
       - name: Install client dependencies
         run: cd app/client && npm ci
       
