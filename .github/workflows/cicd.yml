@@ -3,201 +3,95 @@ name: CloudSecure CI/CD Pipeline
 on:
   push:
     branches: [ main ]
-  pull_request:
-    branches: [ main ]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
-  build-and-deploy:
+  test:
+    name: Test Application
     runs-on: ubuntu-latest
     
     steps:
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v3
-
+      
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+          cache: 'npm'
+          cache-dependency-path: 'app/client/package-lock.json'
+      
+      - name: Install client dependencies
+        run: cd app/client && npm ci
+      
+      - name: Run client tests
+        run: cd app/client && npm test -- --watchAll=false
+  
+  deploy:
+    name: Deploy to AWS
+    runs-on: ubuntu-latest
+    needs: test
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/cloudsecure.pem
+          chmod 600 ~/.ssh/cloudsecure.pem
+          ssh-keygen -y -f ~/.ssh/cloudsecure.pem > ~/.ssh/cloudsecure.pub
+      
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
-
-      - name: Set up Terraform
+      
+      - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.5.0
-
+      
       - name: Terraform Init
+        run: cd terraform && terraform init
+      
+      - name: Terraform Apply
+        run: cd terraform && terraform apply -auto-approve
+        
+      - name: Get EC2 IP Address
+        id: get-ip
         run: |
           cd terraform
-          terraform init
-
-      - name: Terraform Plan
+          echo "instance_ip=$(terraform output -raw instance_public_ip)" >> $GITHUB_OUTPUT
+      
+      - name: Update Ansible hosts
         run: |
-          cd terraform
-          terraform plan -out=tfplan
-
-      - name: Terraform Apply Using Shell Script
-        if: github.event_name != 'pull_request'
+          sed -i "s/{{ instance_ip }}/${{ steps.get-ip.outputs.instance_ip }}/g" ansible/hosts.ini
+      
+      - name: Wait for SSH to become available
         run: |
-          cat > apply_terraform.sh << 'EOF'
-          #!/bin/bash
-          set -e
-
-          cd terraform
-          terraform apply -auto-approve tfplan
-
-          terraform output -json > tf_output.json
-
-          INSTANCE_ID=$(grep -o '"ec2_instance_id": {[^}]*"value": "[^"]*"' tf_output.json | sed 's/.*"value": "\([^"]*\)".*/\1/')
-          PUBLIC_IP=$(grep -o '"ec2_public_ip": {[^}]*"value": "[^"]*"' tf_output.json | sed 's/.*"value": "\([^"]*\)".*/\1/')
-
-          echo "Instance ID: $INSTANCE_ID"
-          echo "Public IP: $PUBLIC_IP"
-
-          if [[ -z "$PUBLIC_IP" || ! "$PUBLIC_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "No valid public IP found in Terraform output. Trying AWS CLI..."
-            for i in {1..5}; do
-              echo "Attempt $i to get public IP from AWS CLI..."
-              PUBLIC_IP=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --query 'Reservations[].Instances[].PublicIpAddress' --output text)
-              if [[ -n "$PUBLIC_IP" && "$PUBLIC_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-                echo "Valid public IP found from AWS CLI: $PUBLIC_IP"
-                break
-              fi
-              if [ $i -eq 5 ]; then
-                echo "Failed to get a valid public IP after 5 attempts"
-                exit 1
-              fi
-              echo "Waiting 20 seconds for IP assignment..."
-              sleep 20
-            done
-          fi
-
-          echo "$INSTANCE_ID" > ../instance_id.txt
-          echo "$PUBLIC_IP" > ../public_ip.txt
-          EOF
-
-          chmod +x apply_terraform.sh
-          ./apply_terraform.sh
-
-      - name: Display Infrastructure Info
-        if: github.event_name != 'pull_request'
-        run: |
-          echo "EC2 Instance ID: $(cat instance_id.txt)"
-          echo "EC2 Public IP: $(cat public_ip.txt)"
-
-      - name: Set up Python
-        if: github.event_name != 'pull_request'
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
+          until ssh -i ~/.ssh/cloudsecure.pem -o StrictHostKeyChecking=no -o ConnectTimeout=5 ec2-user@${{ steps.get-ip.outputs.instance_ip }} "echo SSH available"; do
+            echo "SSH not available yet..."
+            sleep 10
+          done
 
       - name: Install Ansible
-        if: github.event_name != 'pull_request'
         run: |
-          python -m pip install --upgrade pip
-          pip install ansible
+          sudo apt update
+          sudo apt install -y ansible
 
-      - name: Create Ansible inventory
-        if: github.event_name != 'pull_request'
+      - name: Run Ansible playbook
         run: |
-          PUBLIC_IP=$(cat public_ip.txt)
-          echo "Creating Ansible inventory for IP: $PUBLIC_IP"
-          
-          mkdir -p ansible
-          cat > ansible/hosts.ini << EOF
-          [cloudsecure_instances]
-          $PUBLIC_IP ansible_user=ec2-user ansible_ssh_private_key_file=~/.ssh/id_rsa
-
-          [cloudsecure_instances:vars]
-          ansible_python_interpreter=/usr/bin/python3
-          ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
-          EOF
-          
-          echo "Ansible inventory created:"
-          cat ansible/hosts.ini
-
-      - name: Set up SSH key
-        if: github.event_name != 'pull_request'
+          cd ansible
+          ansible-playbook deploy.yml
+      
+      - name: Verify Deployment
         run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-          
-          echo "Host *" > ~/.ssh/config
-          echo "  StrictHostKeyChecking no" >> ~/.ssh/config
-          echo "  UserKnownHostsFile=/dev/null" >> ~/.ssh/config
-          chmod 600 ~/.ssh/config
-
-      - name: Wait for SSH connection
-        if: github.event_name != 'pull_request'
-        run: |
-          PUBLIC_IP=$(cat public_ip.txt)
-          echo "Testing SSH connection to $PUBLIC_IP"
-          
-          cat > test_ssh.sh << 'EOF'
-          #!/bin/bash
-          
-          IP=$1
-          ATTEMPTS=15
-          INTERVAL=20
-          
-          for ((i=1; i<=ATTEMPTS; i++)); do
-            echo "SSH connection attempt $i of $ATTEMPTS..."
-            if ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no -o ConnectTimeout=10 -o UserKnownHostsFile=/dev/null ec2-user@$IP exit 2>/dev/null; then
-              echo "SSH connection successful!"
-              exit 0
-            fi
-            echo "Attempt $i failed. Waiting $INTERVAL seconds..."
-            sleep $INTERVAL
-            if [ $i -eq $ATTEMPTS ]; then
-              echo "Failed to establish SSH connection after $ATTEMPTS attempts."
-              INSTANCE_ID=$(cat instance_id.txt)
-              echo "Security group configuration:"
-              aws ec2 describe-instances --instance-ids $INSTANCE_ID --query 'Reservations[].Instances[].SecurityGroups[].GroupId' --output text | 
-              xargs -I {} aws ec2 describe-security-groups --group-ids {} --query 'SecurityGroups[].IpPermissions[]'
-              exit 1
-            fi
-          done
-          EOF
-          
-          chmod +x test_ssh.sh
-          ./test_ssh.sh "$PUBLIC_IP"
-      - name: Create Ansible configuration
-        if: github.event_name != 'pull_request'
-        run: |
-          cat > ansible.cfg << EOF
-          [defaults]
-          host_key_checking = False
-          remote_tmp = /tmp  # Use default tmp path
-          gathering = explicit
-          
-          [ssh_connection]
-          pipelining = False  # Disable pipelining to test
-          ssh_args = -o ControlMaster=auto -o ControlPersist=60s -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
-          EOF
-          chmod 644 ansible.cfg
-      - name: Deploy with Ansible
-        if: github.event_name != 'pull_request'
-        run: |
-          PUBLIC_IP=$(cat public_ip.txt)
-          echo "Deploying to $PUBLIC_IP with Ansible"
-          ANSIBLE_CONFIG=ansible.cfg ansible-playbook -i ansible/hosts.ini ansible/deploy.yml -vvv  # Increased verbosity
-
-      - name: Check EC2 OS details
-        if: github.event_name != 'pull_request'
-        run: |
-          PUBLIC_IP=$(cat public_ip.txt)
-          echo "Checking OS details for $PUBLIC_IP..."
-          ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ec2-user@$PUBLIC_IP "cat /etc/os-release; uname -a"
-          echo "Checking available package managers..."
-          ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ec2-user@$PUBLIC_IP "which yum dnf apt 2>/dev/null || echo 'No common package managers found'"
-
-      - name: Verify deployment
-        if: github.event_name != 'pull_request'
-        run: |
-          PUBLIC_IP=$(cat public_ip.txt)
-          echo "Verifying deployment at $PUBLIC_IP..."
-          sleep 30
-          ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ec2-user@$PUBLIC_IP "cd /opt/cloudsecure && docker-compose ps"
-          echo "Application deployed to: http://$PUBLIC_IP"
+          echo "Application deployed to http://${{ steps.get-ip.outputs.instance_ip }}"
+          curl -s http://${{ steps.get-ip.outputs.instance_ip }}

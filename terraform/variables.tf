@@ -1,19 +1,23 @@
 variable "aws_region" {
-  description = "AWS region to deploy resources"
+  description = "AWS region"
+  type        = string
   default     = "us-east-1"
 }
 
-variable "ec2_ami" {
-  description = "Amazon Linux 2 AMI ID"
-  default     = "ami-0e8a34246278c21e4" # Amazon Linux 2023 AMI
-}
-
-variable "instance_type" {
-  description = "EC2 instance type"
-  default     = "t2.micro" # Free tier eligible
-}
-
-variable "ssh_public_key" {
-  description = "SSH public key for EC2 instance"
+variable "aws_ami_id" {
+  description = "AMI ID for EC2 instance (Amazon Linux 2)"
   type        = string
-} 
+  default     = "ami-0230bd60aa48260c6"  # Amazon Linux 2023 AMI in us-east-1
+}
+
+variable "aws_instance_type" {
+  description = "EC2 instance type"
+  type        = string
+  default     = "t2.micro"  # Free tier eligible
+}
+
+variable "aws_key_name" {
+  description = "Name of the SSH key pair"
+  type        = string
+  default     = "cloudsecure-key"  # Make sure this key exists in your AWS account
+}

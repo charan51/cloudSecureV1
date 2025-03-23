@@ -1,219 +1,85 @@
 ---
 - name: Deploy CloudSecure Application
-  hosts: cloudsecure_instances
-  become: yes  # Use sudo for privileged tasks where needed
-  gather_facts: no  # Disable facts gathering as we'll use raw commands
-
+  hosts: cloudsecure_servers
+  become: true
   vars:
     app_dir: /opt/cloudsecure
-    docker_compose_version: "2.29.2"
-    node_version: "16.x"
-    vault_db_user: "your_db_username"
-    vault_db_password: "your_db_password"
-    vault_mongo_user: "your_mongo_username"
-    vault_mongo_password: "your_mongo_password"
-    vault_jwt_secret: "your_jwt_secret"
-    ansible_tmp_dir: "/tmp/.ansible-tmp"
-
-  pre_tasks:
-    - name: Ensure tmp directory exists
-      raw: mkdir -p {{ ansible_tmp_dir }} && chmod 0777 {{ ansible_tmp_dir }}
-      tags: always
-
-    - name: Get Python version
-      raw: python3 --version
-      register: python_version
-      tags: always
-
-    - name: Show Python version
-      debug:
-        var: python_version.stdout_lines
-      tags: always
-
-    - name: Check OS details
-      raw: cat /etc/os-release
-      register: os_release
-      tags: debug
-
-    - name: Debug OS info
-      debug:
-        var: os_release.stdout_lines
-      tags: debug
-
-    - name: Fix /tmp permissions if necessary
-      raw: chmod 1777 /tmp
-      tags: debug
-
-    - name: Create Python virtual environment
-      raw: |
-        if ! command -v python3.8; then
-          echo "Python 3.8+ not found, using raw commands for all operations"
-        else
-          echo "Python 3.8+ found, can use it for operations"
-        fi
-      register: python_check
-      tags: always
-
-    - name: Debug Python check
-      debug:
-        var: python_check.stdout_lines
-      tags: debug
 
   tasks:
-    - name: Add Node.js 16.x repository (compatible with Amazon Linux 2)
-      raw: curl -fsSL https://rpm.nodesource.com/setup_16.x | bash -
-      tags: packages
+    - name: Update system packages
+      yum:
+        name: '*'
+        state: latest
+        update_only: yes
 
-    - name: Wait for any existing yum processes to finish
-      raw: ps aux | grep yum || echo "No yum processes running" && sleep 5
-      tags: packages
+    - name: Install required packages
+      yum:
+        name:
+          - docker
+          - git
+          - python3-pip
+        state: present
 
-    - name: Install Docker using yum
-      raw: yum install -y docker
-      register: docker_install_result
-      tags: docker
+    - name: Ensure pip is up to date
+      pip:
+        name: pip
+        state: latest
 
-    - name: Install git and python dependencies
-      raw: yum install -y git python3 python3-pip
-      register: git_install_result
-      tags: packages
-
-    - name: Install nodejs (compatible version)
-      raw: yum install -y nodejs
-      register: nodejs_install_result
-      tags: packages
-
-    - name: Install Docker Compose (legacy binary)
-      raw: |
-        curl -L "https://github.com/docker/compose/releases/download/v{{ docker_compose_version }}/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-        chmod +x /usr/local/bin/docker-compose
-      tags: docker
+    - name: Install Docker Python module
+      pip:
+        name: docker
+        state: present
 
     - name: Start and enable Docker service
-      raw: systemctl start docker && systemctl enable docker
-      register: docker_result
-      tags: docker
-
-    - name: Debug docker service status
-      raw: systemctl status docker
-      register: docker_status
-      tags: debug
-
-    - name: Show Docker service status
-      debug:
-        var: docker_status.stdout_lines
-      tags: debug
+      systemd:
+        name: docker
+        state: started
+        enabled: yes
 
     - name: Add ec2-user to docker group
-      raw: usermod -aG docker ec2-user
-      tags: user
-
-    - name: Verify SSH connectivity and tmp directory
-      raw: |
-        whoami && groups && ls -ld /tmp && mkdir -p /tmp/test-dir && touch /tmp/test-dir/testfile && rm -rf /tmp/test-dir
-      become: no  # Run as ec2-user
-      register: ssh_verify
-      tags: debug
-
-    - name: Debug SSH verification
-      debug:
-        var: ssh_verify.stdout_lines
-      tags: debug
+      user:
+        name: ec2-user
+        groups: docker
+        append: yes
 
     - name: Create application directory
-      raw: |
-        mkdir -p {{ app_dir }} && 
-        chmod 0755 {{ app_dir }} && 
-        chown ec2-user:ec2-user {{ app_dir }}
-      tags: setup
+      file:
+        path: "{{ app_dir }}"
+        state: directory
+        owner: ec2-user
+        group: ec2-user
+        mode: '0755'
 
-    - name: Create application subdirectories
-      raw: |
-        mkdir -p {{ app_dir }}/app && 
-        mkdir -p {{ app_dir }}/app/client && 
-        mkdir -p {{ app_dir }}/app/server && 
-        mkdir -p {{ app_dir }}/backups && 
-        chmod -R 0755 {{ app_dir }} && 
-        chown -R ec2-user:ec2-user {{ app_dir }}
-      tags: setup
+    - name: Copy application files
+      synchronize:
+        src: ../
+        dest: "{{ app_dir }}"
+        rsync_opts:
+          - "--exclude=.git"
+          - "--exclude=terraform"
+          - "--exclude=ansible"
+          - "--exclude=node_modules"
+      become: false
 
-    - name: Copy docker-compose file
-      raw: |
-        cat > {{ app_dir }}/docker-compose.yml << 'EOF'
-        $(cat ../docker-compose.yml)
-        EOF
-        chmod 0644 {{ app_dir }}/docker-compose.yml
-        chown ec2-user:ec2-user {{ app_dir }}/docker-compose.yml
-      tags: deploy
+    - name: Download Docker Compose
+      get_url:
+        url: https://github.com/docker/compose/releases/latest/download/docker-compose-{{ ansible_system }}-{{ ansible_architecture }}
+        dest: /usr/local/bin/docker-compose
+        mode: '0755'
 
-    - name: Run Docker Compose
-      raw: |
-        cd {{ app_dir }} && /usr/local/bin/docker-compose up -d
-      become: no  # Run as ec2-user since it's in docker group
-      tags: deploy
+    - name: Stop any running containers
+      shell: cd {{ app_dir }} && docker-compose down
+      ignore_errors: yes
 
-    - name: Check if containers are running
-      raw: |
-        cd {{ app_dir }} && /usr/local/bin/docker-compose ps
-      become: no
+    - name: Build and start containers
+      shell: cd {{ app_dir }} && docker-compose up --build -d
+      become: false
+
+    - name: Check container status
+      shell: cd {{ app_dir }} && docker-compose ps
       register: container_status
-      tags: deploy
+      become: false
 
-    - name: Display container status
+    - name: Show container status
       debug:
         var: container_status.stdout_lines
-      tags: debug
-
-    - name: Ensure firewalld is started
-      raw: systemctl start firewalld && systemctl enable firewalld
-      tags: security
-
-    - name: Install cronie to provide crontab command
-      raw: yum install -y cronie
-      register: cronie_install_result
-      tags: backup
-
-    - name: Setup backup cron job
-      raw: |
-        (crontab -l 2>/dev/null; echo "0 0 * * * cd {{ app_dir }} && docker compose exec -T db-service mysqldump -u {{ vault_db_user }} -p{{ vault_db_password }} security_ai > {{ app_dir }}/backups/mysql_backup_\$(date +\%Y\%m\%d).sql && docker compose exec -T mongo-service mongodump --uri='mongodb://{{ vault_mongo_user }}:{{ vault_mongo_password }}@mongo-service:27017/cloudsecure?authSource=admin' --archive > {{ app_dir }}/backups/mongo_backup_\$(date +\%Y\%m\%d).archive") | crontab -
-      tags: backup
-
-    - name: Setup log rotation
-      raw: |
-        cat > /etc/logrotate.d/docker-container-logs << 'EOF'
-        /var/lib/docker/containers/*/*.log {
-            rotate 7
-            daily
-            compress
-            missingok
-            delaycompress
-            copytruncate
-        }
-        EOF
-        chmod 0644 /etc/logrotate.d/docker-container-logs
-      tags: maintenance
-
-    - name: Configure automatic security updates
-      raw: yum install -y yum-cron
-      tags: security
-
-    - name: Configure yum-cron for security updates
-      raw: |
-        cat > /etc/yum/yum-cron.conf << 'EOF'
-        [commands]
-        update_cmd = security
-        update_messages = yes
-        download_updates = yes
-        apply_updates = yes
-        random_sleep = 360
-        EOF
-        chmod 0644 /etc/yum/yum-cron.conf
-      tags: security
-
-    - name: Enable yum-cron service
-      raw: systemctl start yum-cron && systemctl enable yum-cron
-      tags: security
-
-    - name: Run logrotate
-      raw: logrotate /etc/logrotate.d/docker-container-logs
-      tags: maintenance

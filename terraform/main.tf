@@ -2,44 +2,65 @@ provider "aws" {
   region = var.aws_region
 }
 
-provider "random" {
-}
+# Create VPC
+resource "aws_vpc" "cloudsecure_vpc" {
+  cidr_block           = "10.0.0.0/16"
+  enable_dns_hostnames = true
+  enable_dns_support   = true
 
-# Generate a random suffix for unique resource names
-resource "random_id" "suffix" {
-  byte_length = 4
-}
-
-# Use existing default VPC
-data "aws_vpc" "existing_vpc" {
-  default = true
-}
-
-# Find default subnet in the first AZ
-data "aws_subnets" "default" {
-  filter {
-    name   = "vpc-id"
-    values = [data.aws_vpc.existing_vpc.id]
+  tags = {
+    Name = "cloudsecure-vpc"
   }
 }
 
-data "aws_subnet" "default" {
-  id = tolist(data.aws_subnets.default.ids)[0]
+# Create Internet Gateway
+resource "aws_internet_gateway" "cloudsecure_igw" {
+  vpc_id = aws_vpc.cloudsecure_vpc.id
+
+  tags = {
+    Name = "cloudsecure-igw"
+  }
 }
 
-# Use existing security group or create a new one
+# Create Public Subnet
+resource "aws_subnet" "cloudsecure_subnet" {
+  vpc_id                  = aws_vpc.cloudsecure_vpc.id
+  cidr_block              = "10.0.1.0/24"
+  map_public_ip_on_launch = true
+  availability_zone       = "${var.aws_region}a"
+
+  tags = {
+    Name = "cloudsecure-subnet"
+  }
+}
+
+# Create Route Table
+resource "aws_route_table" "cloudsecure_rtb" {
+  vpc_id = aws_vpc.cloudsecure_vpc.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.cloudsecure_igw.id
+  }
+
+  tags = {
+    Name = "cloudsecure-rtb"
+  }
+}
+
+# Associate Route Table with Subnet
+resource "aws_route_table_association" "cloudsecure_rta" {
+  subnet_id      = aws_subnet.cloudsecure_subnet.id
+  route_table_id = aws_route_table.cloudsecure_rtb.id
+}
+
+# Create Security Group
 resource "aws_security_group" "cloudsecure_sg" {
-  name        = "cloudsecure-sg-${random_id.suffix.hex}"
-  description = "Allow SSH, HTTP, and application ports"
-  vpc_id      = data.aws_vpc.existing_vpc.id
+  name        = "cloudsecure-sg"
+  description = "Allow web and SSH traffic"
+  vpc_id      = aws_vpc.cloudsecure_vpc.id
 
-  ingress {
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
+  # Allow HTTP
   ingress {
     from_port   = 80
     to_port     = 80
@@ -47,6 +68,23 @@ resource "aws_security_group" "cloudsecure_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  # Allow HTTPS
+  ingress {
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  # Allow SSH
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  # Allow server port
   ingress {
     from_port   = 3000
     to_port     = 3000
@@ -62,44 +100,36 @@ resource "aws_security_group" "cloudsecure_sg" {
   }
 
   tags = {
-    Name = "cloudsecure-sg-${random_id.suffix.hex}"
+    Name = "cloudsecure-sg"
   }
 }
 
-# Find the latest Amazon Linux 2 AMI
-data "aws_ami" "amazon_linux_2" {
-  most_recent = true
-  owners      = ["amazon"]
-
-  filter {
-    name   = "name"
-    values = ["amzn2-ami-hvm-*-x86_64-gp2"]
-  }
-
-  filter {
-    name   = "virtualization-type"
-    values = ["hvm"]
-  }
-}
-
-resource "aws_key_pair" "cloudsecure_key" {
-  key_name   = "cloudsecure-key-${random_id.suffix.hex}"
-  public_key = var.ssh_public_key
-}
-
-resource "aws_instance" "cloudsecure_instance" {
-  ami                    = data.aws_ami.amazon_linux_2.id
-  instance_type          = var.instance_type
-  key_name               = aws_key_pair.cloudsecure_key.key_name
-  subnet_id              = data.aws_subnet.default.id
-  vpc_security_group_ids = [aws_security_group.cloudsecure_sg.id]
-  
-  root_block_device {
-    volume_size = 8
-    volume_type = "gp2"
-  }
+# Create EC2 instance
+resource "aws_instance" "cloudsecure_server" {
+  ami                         = var.aws_ami_id
+  instance_type               = var.aws_instance_type
+  key_name                    = var.aws_key_name
+  subnet_id                   = aws_subnet.cloudsecure_subnet.id
+  vpc_security_group_ids      = [aws_security_group.cloudsecure_sg.id]
+  associate_public_ip_address = true
 
   tags = {
-    Name = "cloudsecure-instance-${random_id.suffix.hex}"
+    Name = "cloudsecure-server"
   }
-} 
+
+  root_block_device {
+    volume_size           = 20
+    volume_type           = "gp2"
+    delete_on_termination = true
+  }
+
+  user_data = <<-EOF
+              #!/bin/bash
+              yum update -y
+              yum install -y docker git
+              systemctl start docker
+              systemctl enable docker
+              curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+              chmod +x /usr/local/bin/docker-compose
+              EOF
+}

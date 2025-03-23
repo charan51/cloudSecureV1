@@ -15,9 +15,9 @@ Check readme under app folder
 
 # Deployment Guide
 
-## Secure Deployment with GitHub Actions
+## CI/CD with GitHub Actions, Terraform and Ansible
 
-The deployment process uses GitHub Actions to securely deploy to your EC2 instance without storing sensitive credentials in the repository.
+The deployment process uses GitHub Actions to automatically test, provision infrastructure with Terraform, and deploy the application with Ansible.
 
 ### Setup Instructions
 
@@ -25,14 +25,22 @@ The deployment process uses GitHub Actions to securely deploy to your EC2 instan
 
    You need to add the following secrets to your GitHub repository:
    
+   - `AWS_ACCESS_KEY_ID`: Your AWS access key ID
+   - `AWS_SECRET_ACCESS_KEY`: Your AWS secret access key
    - `SSH_PRIVATE_KEY`: Your EC2 private key (the contents of your .pem file)
-   - `HOST_IP`: Your EC2 instance IP address
-   - `SSH_USERNAME`: The username for SSH (typically `ec2-user`)
 
    To add these secrets:
    - Go to your GitHub repository
    - Click on "Settings" > "Secrets and variables" > "Actions"
    - Click "New repository secret" to add each secret
+   
+2. **AWS Setup**
+
+   - Create a key pair named `cloudsecure-key` in your AWS account (us-east-1 region)
+   - Create an IAM user with programmatic access and the following permissions:
+     - AmazonEC2FullAccess
+     - AmazonVPCFullAccess
+   - Save the access key ID and secret access key as GitHub secrets
 
 2. **Manual Deployment**
 
