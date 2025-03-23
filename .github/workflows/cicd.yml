@@ -124,14 +124,25 @@ jobs:
         id: get-instance
         run: |
           cd terraform
-          INSTANCE_ID=$(terraform state show aws_instance.cloudsecure_server | grep -oP 'id\s+=\s+"\K[^"]+')
-          echo "INSTANCE_ID=$INSTANCE_ID" >> $GITHUB_OUTPUT
-          echo "Found EC2 instance ID: $INSTANCE_ID"
+          
+          # Use more specific grep pattern to find only the EC2 instance ID
+          # Look for a line with "id" at the beginning of the line with proper spacing
+          INSTANCE_ID=$(terraform state show aws_instance.cloudsecure_server | grep -E '^\s+id\s+=' | head -n 1 | cut -d'"' -f2)
+          
+          # Validate it looks like an instance ID (starts with i-)
+          if [[ "$INSTANCE_ID" == i-* ]]; then
+            echo "Found valid EC2 instance ID: $INSTANCE_ID"
+            echo "instance_id=$INSTANCE_ID" >> $GITHUB_OUTPUT
+          else
+            echo "Error: Could not extract valid instance ID. Raw output:"
+            terraform state show aws_instance.cloudsecure_server
+            exit 1
+          fi
       
       - name: Get EC2 Public IP from AWS CLI
         run: |
           # Use AWS CLI to get the IP directly - more reliable than parsing terraform output
-          INSTANCE_ID="${{ steps.get-instance.outputs.INSTANCE_ID }}"
+          INSTANCE_ID="${{ steps.get-instance.outputs.instance_id }}"
           echo "Looking up IP for instance $INSTANCE_ID"
           
           # Wait for the instance to get a public IP
@@ -158,7 +169,7 @@ jobs:
       
       - name: Debug IP Output
         run: |
-          echo "DEBUG: Instance ID from output: '${{ steps.get-instance.outputs.INSTANCE_ID }}'"
+          echo "DEBUG: Instance ID from output: '${{ steps.get-instance.outputs.instance_id }}'"
           echo "DEBUG: Content of ip.txt file:"
           cat ip.txt
           echo "DEBUG: File exists check: $(test -f ip.txt && echo 'yes' || echo 'no')"
