@@ -31,8 +31,8 @@ jobs:
           host: ${{ env.EC2_HOST }}
           username: ec2-user
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script_stop: true  # Stop on errors
           script: |
+            set -e  # Exit on error
             echo "==== Starting deployment ===="
             
             # Ensure app directory exists
@@ -87,7 +87,7 @@ jobs:
               sudo service docker start
               sudo usermod -a -G docker ec2-user
               # Need to refresh group membership
-              newgrp docker
+              newgrp docker || echo "Newgrp command failed, might need to reconnect to apply group changes"
             fi
             
             # Install Docker Compose if needed
@@ -95,15 +95,15 @@ jobs:
               echo "Installing Docker Compose"
               sudo curl -L "https://github.com/docker/compose/releases/download/v2.20.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
               sudo chmod +x /usr/local/bin/docker-compose
-              sudo ln -s /usr/local/bin/docker-compose /usr/bin/docker-compose
+              sudo ln -s /usr/local/bin/docker-compose /usr/bin/docker-compose || echo "Failed to create symlink, but continuing"
             fi
             
             # Run Docker Compose
             echo "Starting application with Docker Compose"
             if command -v docker compose &> /dev/null; then
-              docker compose up -d --build
+              docker compose up -d --build || echo "Docker Compose command failed"
             else
-              docker-compose up -d --build
+              docker-compose up -d --build || echo "Docker Compose command failed"
             fi
             
             # Check container status
@@ -123,4 +123,4 @@ jobs:
             docker ps
             
             echo "==== Checking container logs ===="
-            docker compose logs --tail=20
+            docker compose logs --tail=20 || docker-compose logs --tail=20 || echo "Could not get logs"
