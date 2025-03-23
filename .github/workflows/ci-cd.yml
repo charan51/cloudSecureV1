@@ -9,6 +9,10 @@ jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
 
+    permissions:
+      id-token: write  # Required for OIDC authentication with AWS
+      contents: read   # Required for actions/checkout
+
     steps:
       # Step 1: Checkout the repository
       - name: Checkout code
@@ -44,8 +48,9 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: <GITHUB_ACTIONS_ROLE_ARN>
+          role-to-assume: arn:aws:iam::123456789012:role/GitHubActionsRole-abc123
           aws-region: us-east-1
+          audience: sts.amazonaws.com
 
       # Step 6: Install application dependencies and run tests
       - name: Install dependencies and run tests
@@ -77,8 +82,7 @@ jobs:
         run: |
           echo "INSTANCE_IP=$(terraform output -raw instance_ip)" >> $GITHUB_ENV
       - name: Display EC2 instance IP
-        run: |
-          echo "EC2 Instance IP: ${{ env.INSTANCE_IP }}"
+        run: echo "EC2 Instance IP: ${{ env.INSTANCE_IP }}"
 
       # Step 10: Generate Ansible inventory
       - name: Generate Ansible inventory
