@@ -163,7 +163,6 @@ jobs:
           
           chmod +x test_ssh.sh
           ./test_ssh.sh "$PUBLIC_IP"
-
       - name: Create Ansible configuration
         if: github.event_name != 'pull_request'
         run: |
@@ -174,7 +173,7 @@ jobs:
           gathering = explicit
           
           [ssh_connection]
-          pipelining = True
+          pipelining = False  # Disable pipelining to test
           ssh_args = -o ControlMaster=auto -o ControlPersist=60s -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
           EOF
           chmod 644 ansible.cfg

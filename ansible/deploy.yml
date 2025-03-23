@@ -103,19 +103,9 @@
         append: yes
       tags: user
 
-    - name: Reset SSH connection to apply group changes
-      ansible.builtin.meta: reset_connection
-      tags: user
-
-    - name: Wait for SSH to become available after reset
-      ansible.builtin.wait_for_connection:
-        delay: 15  # Increased delay for more stability
-        timeout: 180  # Extended timeout
-      tags: user
-
-    - name: Verify SSH connectivity and tmp directory post-reset
+    - name: Verify SSH connectivity and tmp directory before copy
       ansible.builtin.shell: |
-        whoami && ls -ld /tmp && mkdir -p /tmp/test-dir && touch /tmp/test-dir/testfile && rm -rf /tmp/test-dir
+        whoami && groups && ls -ld /tmp && mkdir -p /tmp/test-dir && touch /tmp/test-dir/testfile && rm -rf /tmp/test-dir
       register: ssh_verify
       become: no  # Run as ec2-user
       tags: debug
@@ -155,6 +145,7 @@
         mode: '0644'
         owner: ec2-user
         group: ec2-user
+      become: no  # Run as ec2-user to avoid sudo-related tmp issues
       tags: deploy
 
     - name: Run Docker Compose
@@ -218,7 +209,7 @@
           }
         dest: /etc/logrotate.d/docker-container-logs
         mode: '0644'
-      notify: Run logrotate
+        notify: Run logrotate
       tags: maintenance
 
     - name: Configure automatic security updates
