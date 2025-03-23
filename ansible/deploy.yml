@@ -175,11 +175,48 @@
       state: directory
       mode: '0755'
 
-  - name: Ensure firewalld is started
+  - name: Check operating system
+    command: cat /etc/os-release
+    register: os_release
+    changed_when: false
+
+  - name: Determine firewall service
+    set_fact:
+      firewall_service: "{{ 'firewalld' if 'Fedora' in os_release.stdout or 'CentOS' in os_release.stdout or 'Red Hat' in os_release.stdout else 'iptables' }}"
+
+  - name: Check if firewalld is installed
+    command: which firewalld
+    register: firewalld_check
+    ignore_errors: yes
+    changed_when: false
+
+  - name: Ensure firewalld is started (if available)
     service:
       name: firewalld
       state: started
       enabled: yes
+    when: firewall_service == 'firewalld' and firewalld_check.rc == 0
+    ignore_errors: yes
+
+  - name: Configure iptables on Amazon Linux
+    block:
+      - name: Install iptables-services if needed
+        yum:
+          name: iptables-services
+          state: present
+        
+      - name: Enable required ports with iptables
+        shell: |
+          iptables -A INPUT -p tcp --dport 80 -j ACCEPT
+          iptables -A INPUT -p tcp --dport 3000 -j ACCEPT
+          iptables-save > /etc/sysconfig/iptables
+        ignore_errors: yes
+    when: firewall_service == 'iptables' or firewalld_check.rc != 0
+    ignore_errors: yes
+
+  - name: Inform user about AWS Security Group usage
+    debug:
+      msg: "Note: AWS EC2 instances typically use Security Groups for firewall management. Make sure your security group allows traffic on required ports."
 
   - name: Install cronie to provide crontab command
     yum:
