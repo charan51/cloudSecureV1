@@ -43,7 +43,11 @@ jobs:
         id: ec2-ip
         working-directory: ./terraform
         run: |
-          IP=$(terraform output -raw instance_ip | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+')
+          IP=$(terraform output -raw instance_ip | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' || echo "")
+          if [ -z "$IP" ]; then
+            echo "No running EC2 instance found and none created. Exiting."
+            exit 1
+          fi
           echo "::set-output name=ip::$IP"
 
       # Install SSH key for EC2 access
@@ -52,7 +56,7 @@ jobs:
           echo "${{ secrets.EC2_SSH_KEY }}" > /home/runner/key.pem
           chmod 400 /home/runner/key.pem
 
-      # Debug SSH Key and Initial Connection
+      # Debug SSH Key and Connection
       - name: Debug SSH Key and Connection
         run: |
           echo "Checking key.pem contents (first few lines):"
@@ -61,14 +65,14 @@ jobs:
           ls -l /home/runner/key.pem
           echo "Testing key validity:"
           ssh-keygen -y -f /home/runner/key.pem || echo "Invalid key format"
-          echo "Initial connection test:"
-          nc -v -w 5 ${{ steps.ec2-ip.outputs.ip }} 22 || echo "Port 22 not open"
+          echo "Attempting SSH connection with verbose output:"
+          ssh -v -o StrictHostKeyChecking=no -i /home/runner/key.pem ec2-user@${{ steps.ec2-ip.outputs.ip }} "echo 'SSH successful'" || echo "SSH failed"
 
       # Wait for EC2 to be ready
       - name: Wait for EC2 Instance
         run: |
           echo "Waiting for EC2 instance to be ready..."
-          for i in {1..60}; do  # Increased to 60 attempts (10 minutes)
+          for i in {1..60}; do
             if nc -v -w 5 -z ${{ steps.ec2-ip.outputs.ip }} 22; then
               echo "EC2 is ready!"
               break
@@ -80,8 +84,6 @@ jobs:
             echo "Error: EC2 not reachable after 10 minutes"
             exit 1
           fi
-          # Additional SSH test after wait
-          ssh -v -o StrictHostKeyChecking=no -i /home/runner/key.pem ec2-user@${{ steps.ec2-ip.outputs.ip }} "echo 'SSH successful'" || echo "SSH still failed"
 
       # Build and Deploy Docker Containers
       - name: Deploy Docker Compose

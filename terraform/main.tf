@@ -8,9 +8,21 @@ data "aws_security_group" "cloudsecure_sg" {
   vpc_id = "vpc-06ba180dc12d2a77a"
 }
 
+# Check for existing instances with the tag Name=cloudsecure-instance
+data "aws_instances" "existing_instances" {
+  instance_tags = {
+    Name = "cloudsecure-instance"
+  }
+
+  # Optional: Filter by instance state (e.g., only running instances)
+  instance_state_names = ["running"]
+}
+
+# Create EC2 instance only if no existing instances are found
 resource "aws_instance" "cloudsecure" {
-  count         = var.instance_count
-  ami           = "ami-0e86e20dae9224db8" # Amazon Linux 2 AMI (us-east-1)
+  # Create the instance only if no running instances with the tag exist
+  count         = length(data.aws_instances.existing_instances.ids) == 0 ? var.instance_count : 0
+  ami           = "ami-0e4d9ed95865f3b40" # Amazon Linux 2 AMI (us-east-1)
   instance_type = "t2.micro"
   key_name      = "cloudsecure-key"
 
@@ -39,5 +51,6 @@ variable "instance_count" {
 }
 
 output "instance_ip" {
-  value = aws_instance.cloudsecure[0].public_ip
+  # Use the first instance's public IP if created, otherwise null
+  value = length(aws_instance.cloudsecure) > 0 ? aws_instance.cloudsecure[0].public_ip : (length(data.aws_instances.existing_instances.public_ips) > 0 ? data.aws_instances.existing_instances.public_ips[0] : null)
 }
