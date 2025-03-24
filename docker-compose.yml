@@ -20,8 +20,6 @@ services:
       context: ./app/server
       dockerfile: Dockerfile
     container_name: cloudsecure-server
-    env_file:
-      - ./app/server/.env
     ports:
       - "3000:3000"
     depends_on:
