@@ -8,7 +8,7 @@ resource "aws_instance" "cloudsecure" {
   instance_type = "t2.micro"             # Free tier eligible
   key_name      = "cloudsecure-key"      # You'll need to create this key pair in AWS
 
-  vpc_security_group_ids = [aws_security_group.cloudsecure_sg.id]
+  vpc_security_group_ids = [data.aws_security_group.cloudsecure_sg.id]
 
   user_data = <<-EOF
               #!/bin/bash
