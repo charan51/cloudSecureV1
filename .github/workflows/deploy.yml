@@ -89,11 +89,47 @@ jobs:
       - name: Deploy Docker Compose
         run: |
           ssh -o StrictHostKeyChecking=no -i /home/runner/key.pem ec2-user@${{ steps.ec2-ip.outputs.ip }} << 'EOF'
-            # Install Docker and Docker Compose
-            sudo yum update -y
-            sudo amazon-linux-extras install docker -y
+            # Debug OS information
+            echo "OS Information:"
+            cat /etc/os-release
+            echo "User: $(whoami)"
+
+            # Install Docker based on OS
+            if [[ -f /etc/os-release ]]; then
+              . /etc/os-release
+              case $ID in
+                amzn)
+                  if [[ $VERSION_ID == 2* ]]; then
+                    # Amazon Linux 2
+                    sudo yum update -y
+                    sudo amazon-linux-extras install docker -y
+                  else
+                    # Amazon Linux 2023
+                    sudo dnf update -y
+                    sudo dnf install -y docker
+                  fi
+                  ;;
+                ubuntu)
+                  # Ubuntu
+                  sudo apt-get update -y
+                  sudo apt-get install -y docker.io
+                  ;;
+                *)
+                  echo "Unsupported OS: $ID"
+                  exit 1
+                  ;;
+              esac
+            else
+              echo "Cannot determine OS. /etc/os-release not found."
+              exit 1
+            fi
+
+            # Start and enable Docker
             sudo systemctl start docker
             sudo systemctl enable docker
+
+            # Add ec2-user to docker group
+            sudo groupadd -f docker
             sudo usermod -aG docker ec2-user
 
             # Debug Docker installation and status
