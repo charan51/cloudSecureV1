@@ -52,6 +52,18 @@ jobs:
           echo "${{ secrets.EC2_SSH_KEY }}" > /home/runner/key.pem
           chmod 400 /home/runner/key.pem
 
+      # Debug SSH Key and Connection
+      - name: Debug SSH Key and Connection
+        run: |
+          echo "Checking key.pem contents (first few lines):"
+          head -n 5 /home/runner/key.pem
+          echo "Checking key file permissions:"
+          ls -l /home/runner/key.pem
+          echo "Testing key validity:"
+          ssh-keygen -y -f /home/runner/key.pem || echo "Invalid key format"
+          echo "Attempting SSH connection with verbose output:"
+          ssh -v -o StrictHostKeyChecking=no -i /home/runner/key.pem ec2-user@${{ steps.ec2-ip.outputs.ip }} "echo 'SSH successful'" || echo "SSH failed"
+
       # Wait for EC2 to be ready
       - name: Wait for EC2 Instance
         run: |
