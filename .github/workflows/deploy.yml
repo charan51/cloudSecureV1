@@ -38,23 +38,57 @@ jobs:
         working-directory: ./terraform
         run: terraform apply -auto-approve
 
+      # Get EC2 instance IP
       - name: Get EC2 IP
         id: ec2-ip
         working-directory: ./terraform
         run: |
           IP=$(terraform output -raw instance_ip | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+')
           echo "::set-output name=ip::$IP"
-      
+
+      # Install SSH key for EC2 access
+      - name: Install SSH Key
+        run: |
+          echo "${{ secrets.EC2_SSH_KEY }}" > /home/runner/key.pem
+          chmod 400 /home/runner/key.pem
+
+      # Wait for EC2 to be ready
+      - name: Wait for EC2 Instance
+        run: |
+          echo "Waiting for EC2 instance to be ready..."
+          for i in {1..30}; do
+            if nc -w 5 -z ${{ steps.ec2-ip.outputs.ip }} 22; then
+              echo "EC2 is ready!"
+              break
+            fi
+            echo "Waiting... ($i/30)"
+            sleep 10
+          done
+          if ! nc -w 5 -z ${{ steps.ec2-ip.outputs.ip }} 22; then
+            echo "Error: EC2 not reachable after 5 minutes"
+            exit 1
+          fi
+
+      # Build and Deploy Docker Containers
       - name: Deploy Docker Compose
         run: |
-          ssh -o StrictHostKeyChecking=no -i key.pem ec2-user@${{ steps.ec2-ip.outputs.ip }} << 'EOF'
-            sudo apt-get update
-            sudo apt-get install -y docker-compose
+          ssh -o StrictHostKeyChecking=no -i /home/runner/key.pem ec2-user@${{ steps.ec2-ip.outputs.ip }} << 'EOF'
+            sudo yum update -y
+            sudo amazon-linux-extras install docker -y
+            sudo systemctl start docker
+            sudo systemctl enable docker
+            sudo usermod -aG docker ec2-user
+            sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+            sudo chmod +x /usr/local/bin/docker-compose
             mkdir -p /home/ec2-user/cloudsecure
           EOF
-          scp -i key.pem -r ./app ec2-user@${{ steps.ec2-ip.outputs.ip }}:/home/ec2-user/cloudsecure/
-          scp -i key.pem docker-compose.yml ec2-user@${{ steps.ec2-ip.outputs.ip }}:/home/ec2-user/cloudsecure/
-          ssh -o StrictHostKeyChecking=no -i key.pem ec2-user@${{ steps.ec2-ip.outputs.ip }} << 'EOF'
+          
+          # Copy Docker files to EC2
+          scp -i /home/runner/key.pem -r ./app ec2-user@${{ steps.ec2-ip.outputs.ip }}:/home/ec2-user/cloudsecure/
+          scp -i /home/runner/key.pem docker-compose.yml ec2-user@${{ steps.ec2-ip.outputs.ip }}:/home/ec2-user/cloudsecure/
+
+          # Build and run Docker Compose
+          ssh -o StrictHostKeyChecking=no -i /home/runner/key.pem ec2-user@${{ steps.ec2-ip.outputs.ip }} << 'EOF'
             cd /home/ec2-user/cloudsecure
             sudo docker-compose down
             sudo docker-compose up --build -d
