@@ -72,19 +72,24 @@ jobs:
       # Build and Deploy Docker Containers
       - name: Deploy Docker Compose
         run: |
-          ssh -o StrictHostKeyChecking=no -i /home/runner/key.pem ubuntu@${{ env.EC2_IP }} << 'EOF'
-            sudo apt-get update
-            sudo apt-get install -y docker-compose
-            mkdir -p /home/ubuntu/cloudsecure
+          ssh -o StrictHostKeyChecking=no -i /home/runner/key.pem ec2-user@${{ env.EC2_IP }} << 'EOF'
+            sudo yum update -y
+            sudo amazon-linux-extras install docker -y
+            sudo systemctl start docker
+            sudo systemctl enable docker
+            sudo usermod -aG docker ec2-user
+            sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+            sudo chmod +x /usr/local/bin/docker-compose
+            mkdir -p /home/ec2-user/cloudsecure
           EOF
           
           # Copy Docker files to EC2
-          scp -i /home/runner/key.pem -r ./app ubuntu@${{ env.EC2_IP }}:/home/ubuntu/cloudsecure/
-          scp -i /home/runner/key.pem docker-compose.yml ubuntu@${{ env.EC2_IP }}:/home/ubuntu/cloudsecure/
+          scp -i /home/runner/key.pem -r ./app ec2-user@${{ env.EC2_IP }}:/home/ec2-user/cloudsecure/
+          scp -i /home/runner/key.pem docker-compose.yml ec2-user@${{ env.EC2_IP }}:/home/ec2-user/cloudsecure/
 
           # Build and run Docker Compose
-          ssh -o StrictHostKeyChecking=no -i /home/runner/key.pem ubuntu@${{ env.EC2_IP }} << 'EOF'
-            cd /home/ubuntu/cloudsecure
+          ssh -o StrictHostKeyChecking=no -i /home/runner/key.pem ec2-user@${{ env.EC2_IP }} << 'EOF'
+            cd /home/ec2-user/cloudsecure
             sudo docker-compose down
             sudo docker-compose up --build -d
           EOF
