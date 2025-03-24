@@ -22,7 +22,7 @@ data "aws_instances" "existing_instances" {
 resource "aws_instance" "cloudsecure" {
   # Create the instance only if no running instances with the tag exist
   count         = length(data.aws_instances.existing_instances.ids) == 0 ? var.instance_count : 0
-  ami           = "ami-0e4d9ed95865f3b40" # Amazon Linux 2 AMI (us-east-1)
+  ami           = "ami-08b5b3a93ed654d19" # Amazon Linux 2 AMI (us-east-1)
   instance_type = "t2.micro"
   key_name      = "cloudsecure-key"
 
