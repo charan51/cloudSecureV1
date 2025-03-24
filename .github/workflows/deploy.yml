@@ -38,35 +38,23 @@ jobs:
         working-directory: ./terraform
         run: terraform apply -auto-approve
 
-      # Get EC2 instance IP
       - name: Get EC2 IP
         id: ec2-ip
         working-directory: ./terraform
         run: |
           IP=$(terraform output -raw instance_ip | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+')
-          echo "EC2_IP=$IP" >> $GITHUB_ENV
-
-      # Install SSH key for EC2 access
-      - name: Install SSH Key
-        run: |
-          echo "${{ secrets.EC2_SSH_KEY }}" > key.pem
-          chmod 400 key.pem
-
-      # Build and Deploy Docker Containers
+          echo "::set-output name=ip::$IP"
+      
       - name: Deploy Docker Compose
         run: |
-          ssh -o StrictHostKeyChecking=no -i key.pem ubuntu@${{ env.EC2_IP }} << 'EOF'
+          ssh -o StrictHostKeyChecking=no -i key.pem ubuntu@${{ steps.ec2-ip.outputs.ip }} << 'EOF'
             sudo apt-get update
             sudo apt-get install -y docker-compose
             mkdir -p /home/ubuntu/cloudsecure
           EOF
-          
-          # Copy Docker files to EC2
-          scp -i key.pem -r ./app ubuntu@${{ env.EC2_IP }}:/home/ubuntu/cloudsecure/
-          scp -i key.pem docker-compose.yml ubuntu@${{ env.EC2_IP }}:/home/ubuntu/cloudsecure/
-
-          # Build and run Docker Compose
-          ssh -o StrictHostKeyChecking=no -i key.pem ubuntu@${{ env.EC2_IP }} << 'EOF'
+          scp -i key.pem -r ./app ubuntu@${{ steps.ec2-ip.outputs.ip }}:/home/ubuntu/cloudsecure/
+          scp -i key.pem docker-compose.yml ubuntu@${{ steps.ec2-ip.outputs.ip }}:/home/ubuntu/cloudsecure/
+          ssh -o StrictHostKeyChecking=no -i key.pem ubuntu@${{ steps.ec2-ip.outputs.ip }} << 'EOF'
             cd /home/ubuntu/cloudsecure
             sudo docker-compose down
             sudo docker-compose up --build -d
