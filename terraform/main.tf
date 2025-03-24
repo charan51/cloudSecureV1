@@ -8,21 +8,35 @@ data "aws_security_group" "cloudsecure_sg" {
   vpc_id = "vpc-06ba180dc12d2a77a"
 }
 
+# Fetch the latest Amazon Linux 2023 AMI
+data "aws_ami" "amazon_linux_2023" {
+  most_recent = true
+  owners      = ["amazon"]
+
+  filter {
+    name   = "name"
+    values = ["al2023-ami-*-x86_64"]
+  }
+
+  filter {
+    name   = "state"
+    values = ["available"]
+  }
+}
+
 # Check for existing instances with the tag Name=cloudsecure-instance
 data "aws_instances" "existing_instances" {
   instance_tags = {
     Name = "cloudsecure-instance"
   }
 
-  # Optional: Filter by instance state (e.g., only running instances)
   instance_state_names = ["running"]
 }
 
 # Create EC2 instance only if no existing instances are found
 resource "aws_instance" "cloudsecure" {
-  # Create the instance only if no running instances with the tag exist
   count         = length(data.aws_instances.existing_instances.ids) == 0 ? var.instance_count : 0
-  ami           = "ami-08b5b3a93ed654d19" # Amazon Linux 2 AMI (us-east-1)
+  ami           = data.aws_ami.amazon_linux_2023.id # Use Amazon Linux 2023 AMI
   instance_type = "t2.micro"
   key_name      = "cloudsecure-key"
 
@@ -30,8 +44,8 @@ resource "aws_instance" "cloudsecure" {
 
   user_data = <<-EOF
               #!/bin/bash
-              yum update -y
-              amazon-linux-extras install docker -y
+              dnf update -y
+              dnf install -y docker
               systemctl start docker
               systemctl enable docker
               usermod -aG docker ec2-user
@@ -51,6 +65,5 @@ variable "instance_count" {
 }
 
 output "instance_ip" {
-  # Use the first instance's public IP if created, otherwise null
   value = length(aws_instance.cloudsecure) > 0 ? aws_instance.cloudsecure[0].public_ip : (length(data.aws_instances.existing_instances.public_ips) > 0 ? data.aws_instances.existing_instances.public_ips[0] : null)
 }

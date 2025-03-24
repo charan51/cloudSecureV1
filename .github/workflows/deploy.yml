@@ -99,7 +99,7 @@ jobs:
               . /etc/os-release
               case $ID in
                 amzn)
-                  if [[ $VERSION_ID == 2* ]]; then
+                  if [[ $VERSION_ID =~ ^2 ]]; then
                     # Amazon Linux 2
                     sudo yum update -y
                     sudo amazon-linux-extras install docker -y
