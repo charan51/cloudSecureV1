@@ -52,7 +52,7 @@ jobs:
           echo "${{ secrets.EC2_SSH_KEY }}" > /home/runner/key.pem
           chmod 400 /home/runner/key.pem
 
-      # Debug SSH Key and Connection
+      # Debug SSH Key and Initial Connection
       - name: Debug SSH Key and Connection
         run: |
           echo "Checking key.pem contents (first few lines):"
@@ -61,25 +61,27 @@ jobs:
           ls -l /home/runner/key.pem
           echo "Testing key validity:"
           ssh-keygen -y -f /home/runner/key.pem || echo "Invalid key format"
-          echo "Attempting SSH connection with verbose output:"
-          ssh -v -o StrictHostKeyChecking=no -i /home/runner/key.pem ec2-user@${{ steps.ec2-ip.outputs.ip }} "echo 'SSH successful'" || echo "SSH failed"
+          echo "Initial connection test:"
+          nc -v -w 5 ${{ steps.ec2-ip.outputs.ip }} 22 || echo "Port 22 not open"
 
       # Wait for EC2 to be ready
       - name: Wait for EC2 Instance
         run: |
           echo "Waiting for EC2 instance to be ready..."
-          for i in {1..30}; do
-            if nc -w 5 -z ${{ steps.ec2-ip.outputs.ip }} 22; then
+          for i in {1..60}; do  # Increased to 60 attempts (10 minutes)
+            if nc -v -w 5 -z ${{ steps.ec2-ip.outputs.ip }} 22; then
               echo "EC2 is ready!"
               break
             fi
-            echo "Waiting... ($i/30)"
+            echo "Waiting... ($i/60)"
             sleep 10
           done
           if ! nc -w 5 -z ${{ steps.ec2-ip.outputs.ip }} 22; then
-            echo "Error: EC2 not reachable after 5 minutes"
+            echo "Error: EC2 not reachable after 10 minutes"
             exit 1
           fi
+          # Additional SSH test after wait
+          ssh -v -o StrictHostKeyChecking=no -i /home/runner/key.pem ec2-user@${{ steps.ec2-ip.outputs.ip }} "echo 'SSH successful'" || echo "SSH still failed"
 
       # Build and Deploy Docker Containers
       - name: Deploy Docker Compose
