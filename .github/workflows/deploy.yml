@@ -1,4 +1,4 @@
-name: Deploy cloudSecureV1
+name: Deploy CloudSecure to AWS EC2
 
 on:
   push:
@@ -6,85 +6,66 @@ on:
       - main
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
-
-      - name: Build client image
-        run: docker build -t cloudsecure-client:latest ./app/client
-
-      - name: Build server image
-        run: docker build -t cloudsecure-server:latest ./app/server
-
-      - name: Save client image as tar
-        run: docker save -o cloudsecure-client.tar cloudsecure-client:latest
-
-      - name: Save server image as tar
-        run: docker save -o cloudsecure-server.tar cloudsecure-server:latest
-
-      - name: Upload images as artifacts
-        uses: actions/upload-artifact@v3
-        with:
-          name: docker-images
-          path: |
-            cloudsecure-client.tar
-            cloudsecure-server.tar
-
   deploy:
     runs-on: ubuntu-latest
-    needs: build
+
     steps:
+      # Checkout the repository
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Download Docker image artifacts
-        uses: actions/download-artifact@v3
-        with:
-          name: docker-images
-          path: .
-
-      - name: Set up Terraform
+      # Set up Terraform
+      - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.5.0
 
-      - name: Configure AWS credentials
+      # Configure AWS Credentials
+      - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-west-2
+          aws-region: us-east-1
 
+      # Initialize Terraform
       - name: Terraform Init
+        working-directory: ./terraform
         run: terraform init
-        working-directory: ./terraform
 
+      # Apply Terraform (create or update EC2)
       - name: Terraform Apply
-        run: terraform apply -auto-approve -var "ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}"
         working-directory: ./terraform
+        run: terraform apply -auto-approve
 
-      - name: Get EC2 public IP
-        id: get_ip
-        run: echo "INSTANCE_IP=$(terraform output -raw instance_public_ip)" >> $GITHUB_ENV
+      # Get EC2 instance IP
+      - name: Get EC2 IP
+        id: ec2-ip
         working-directory: ./terraform
+        run: echo "EC2_IP=$(terraform output -raw instance_ip)" >> $GITHUB_ENV
 
-      - name: Set up SSH key
+      # Install SSH key for EC2 access
+      - name: Install SSH Key
         run: |
-          mkdir -p /home/runner/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > /home/runner/.ssh/id_rsa
-          chmod 600 /home/runner/.ssh/id_rsa
+          echo "${{ secrets.EC2_SSH_KEY }}" > key.pem
+          chmod 400 key.pem
 
-      - name: Install Ansible
-        run: sudo apt-get update && sudo apt-get install -y ansible
-
-      - name: Generate Ansible inventory
+      # Build and Deploy Docker Containers
+      - name: Deploy Docker Compose
         run: |
-          sed "s/{{ instance_public_ip }}/${{ env.INSTANCE_IP }}/" ansible/inventory.tpl > ansible/inventory
+          ssh -o StrictHostKeyChecking=no -i key.pem ubuntu@${{ env.EC2_IP }} << 'EOF'
+            sudo apt-get update
+            sudo apt-get install -y docker-compose
+            mkdir -p /home/ubuntu/cloudsecure
+          EOF
+          
+          # Copy Docker files to EC2
+          scp -i key.pem -r ./app ubuntu@${{ env.EC2_IP }}:/home/ubuntu/cloudsecure/
+          scp -i key.pem docker-compose.yml ubuntu@${{ env.EC2_IP }}:/home/ubuntu/cloudsecure/
 
-      - name: Run Ansible Playbook
-        run: ansible-playbook -i ansible/inventory ansible/playbook.yml
+          # Build and run Docker Compose
+          ssh -o StrictHostKeyChecking=no -i key.pem ubuntu@${{ env.EC2_IP }} << 'EOF'
+            cd /home/ubuntu/cloudsecure
+            sudo docker-compose down
+            sudo docker-compose up --build -d
+          EOF

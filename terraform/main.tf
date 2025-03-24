@@ -1,57 +1,43 @@
 provider "aws" {
-  region = var.aws_region
+  region = "us-east-1" # You can change this to your preferred region
 }
 
-resource "aws_vpc" "main" {
-  cidr_block = "10.0.0.0/16"
+resource "aws_instance" "cloudsecure" {
+  count         = var.instance_count
+  ami           = "ami-0e86e20dae9224db8" # Ubuntu 22.04 LTS AMI (us-east-1, free tier eligible)
+  instance_type = "t2.micro"             # Free tier eligible
+  key_name      = "cloudsecure-key"      # You'll need to create this key pair in AWS
+
+  vpc_security_group_ids = [aws_security_group.cloudsecure_sg.id]
+
+  user_data = <<-EOF
+              #!/bin/bash
+              apt-get update
+              apt-get install -y docker.io
+              systemctl start docker
+              systemctl enable docker
+              usermod -aG docker ubuntu
+              EOF
+
   tags = {
-    Name = "cloudsecure-vpc"
+    Name = "cloudsecure-instance"
+  }
+
+  # Check if instance is running, if not create one
+  lifecycle {
+    create_before_destroy = true
   }
 }
 
-resource "aws_subnet" "public" {
-  vpc_id            = aws_vpc.main.id
-  cidr_block        = "10.0.1.0/24"
-  availability_zone = "${var.aws_region}a"
-  map_public_ip_on_launch = true
-  tags = {
-    Name = "cloudsecure-subnet"
-  }
-}
-
-resource "aws_internet_gateway" "igw" {
-  vpc_id = aws_vpc.main.id
-  tags = {
-    Name = "cloudsecure-igw"
-  }
-}
-
-resource "aws_route_table" "public" {
-  vpc_id = aws_vpc.main.id
-  route {
-    cidr_block = "0.0.0.0/0"
-    gateway_id = aws_internet_gateway.igw.id
-  }
-  tags = {
-    Name = "cloudsecure-rt"
-  }
-}
-
-resource "aws_route_table_association" "public" {
-  subnet_id      = aws_subnet.public.id
-  route_table_id = aws_route_table.public.id
-}
-
-resource "aws_security_group" "allow_traffic" {
+resource "aws_security_group" "cloudsecure_sg" {
   name        = "cloudsecure-sg"
-  description = "Allow traffic for cloudsecure app"
-  vpc_id      = aws_vpc.main.id
+  description = "Security group for CloudSecure app"
 
   ingress {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = ["0.0.0.0/0"] # Restrict this in production
   }
 
   ingress {
@@ -95,25 +81,12 @@ resource "aws_security_group" "allow_traffic" {
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
   }
-
-  tags = {
-    Name = "cloudsecure-sg"
-  }
 }
 
-resource "aws_key_pair" "deployer" {
-  key_name   = "cloudsecure-key"
-  public_key = var.ssh_public_key
+variable "instance_count" {
+  default = 1
 }
 
-resource "aws_instance" "app" {
-  ami           = "ami-0ebfd94aafb1246b3" # Amazon Linux 2 AMI (update for your region)
-  instance_type = "t2.micro"
-  subnet_id     = aws_subnet.public.id
-  security_groups = [aws_security_group.allow_traffic.name]
-  key_name      = aws_key_pair.deployer.key_name
-
-  tags = {
-    Name = "cloudsecure-instance"
-  }
+output "instance_ip" {
+  value = aws_instance.cloudsecure[0].public_ip
 }
