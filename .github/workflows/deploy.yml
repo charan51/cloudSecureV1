@@ -42,7 +42,9 @@ jobs:
       - name: Get EC2 IP
         id: ec2-ip
         working-directory: ./terraform
-        run: echo "EC2_IP=$(terraform output -raw instance_ip | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+')" >> $GITHUB_ENV
+        run: |
+          IP=$(terraform output -raw instance_ip | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+')
+          echo "EC2_IP=$IP" >> $GITHUB_ENV
 
       # Install SSH key for EC2 access
       - name: Install SSH Key
